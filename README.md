@@ -35,7 +35,7 @@ Two layouts:
 | **vx-search** | side bar (vx-code) | Search across every repo of the workspace (`git grep`): Match Case, Whole Word, Regex, files to include; a match opens the file at its line. |
 | **vx-panel** | bottom panel (vx-code) | Problems (conflicts, failing pipelines, branches behind, and **Run checks**: the repo's typecheck / lint scripts as file:line rows), Terminal (shells that never become tabs), Ports (listening programs: open, or stop after asking). |
 | **vx-activity** | activity bar (vx-code) | Explorer, Search, Source Control, CI, Spaces, Agents with badges; Graph and Settings. Also the side bar's title. |
-| **vx-titlebar** | title bar (vx-code) | Workspace name, ← → through visited tabs, the command center (Go to File across every repo, recently opened files, `>` for Herdr's command palette), layout toggles. |
+| **vx-titlebar** | title bar (vx-code) | Workspace name, ← → through visited tabs, the command center and **Quick Open** like VS Code's: files of every repo with the matched letters highlighted (recently opened first, `name:42` opens at a line), `:` go to line, `@` go to symbol, `>` every Herdr and vx command with its key, `%` search text, `?` help; ⌘Enter opens to the side. Layout toggles. |
 | **vx-icons** | assets | [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme) icons (MIT) and the UI icons. |
 
 Changes, CI and Graph each have a `repo ▾` switcher in their header.
@@ -88,7 +88,8 @@ theme, light ones too.
 
 | Key | Does |
 |---|---|
-| ⌘P | Go to File (type `>` for Herdr's command palette) |
+| ⌘P | Quick Open: files; `:` line, `@` symbol, `>` commands, `%` text, `?` help |
+| ⌘⇧O | Go to Symbol in the open file |
 | ⌘⇧F | Search |
 | ⌘⇧E / ⌘⇧G | Explorer / Source Control |
 | ⌘J or `` ctrl-` `` | Show or hide the bottom panel |

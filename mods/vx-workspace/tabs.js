@@ -23,6 +23,11 @@ export const isPreviewTab = (tabId, mod) => ["vx-files", "vx-changes"].includes(
 export function showInViewer(mod, value, name) {
   const space = spaces().find((s) => s.active);
   if (!space) return;
+  // Quick Open's "recently opened": every file previewed, from anywhere.
+  if (mod === "vx-files" && value?.root && value.rel && !value.on) {
+    const rest = (shared("vx.goto.recent") ?? []).filter((r) => !(r?.root?.path === value.root && r.rel === value.rel));
+    setShared("vx.goto.recent", [{ root: { name: value.root.split("/").pop(), path: value.root }, rel: value.rel }, ...rest].slice(0, 50));
+  }
   const key = `${mod}.view`;
   const all = shared(key) ?? {};
   const prev = all[space.id];

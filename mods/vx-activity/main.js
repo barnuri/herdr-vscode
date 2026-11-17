@@ -8,7 +8,7 @@
 // shows or hides the bottom panel (⌘J).
 import { View, div } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { theme, layout, run, shared, agents, nextCommand, notify, checking, props } from "herdr";
+import { theme, layout, run, shared, setShared, agents, nextCommand, notify, checking, props } from "herdr";
 import { ctx, repoTop, baseName, workspace } from "./ws.js";
 import { showInViewer } from "./tabs.js";
 import { Icon } from "./ui.js";
@@ -41,6 +41,10 @@ class VxActivity extends View {
         const c = await nextCommand();
         if (VIEWS.some((v) => v.id === c)) this.show(c);
         if (c === "panel") this.togglePanel();
+        // The bottom panel's tabs and actions, from anywhere (its header only hears keys while shown).
+        if (["problems", "terminal", "ports"].includes(c)) this.panelView(c);
+        if (c === "checks") this.panelView("problems", "vx-panel.checks", cx);
+        if (c === "newterm") this.panelView("terminal", "vx-panel.new", cx);
         cx.notify();
       }
     });
@@ -72,6 +76,12 @@ class VxActivity extends View {
     run("layout.show", { id: "bottom" });
     const s = shared("vx.panel");
     if (s?.shown) run("pane.focus", { terminal: s.shown });
+  }
+
+  panelView(view, then, cx) {
+    setShared("vx.panel", { ...(shared("vx.panel") ?? {}), view });
+    run("layout.show", { id: "bottom" });
+    if (then) cx.timer.after(600, () => run(then));
   }
 
   openGraph(cx) {

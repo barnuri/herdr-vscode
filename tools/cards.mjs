@@ -19,6 +19,7 @@ export const LAYOUT_CARDS = {
     keys: {
       "layout:vx-code": {
         "cmd-p": "vx-titlebar.goto",
+        "cmd-shift-o": "vx-titlebar.symbols",
         "cmd-shift-f": "vx-activity.search",
         "cmd-shift-e": "vx-activity.explorer",
         "cmd-shift-g": "vx-activity.scm",

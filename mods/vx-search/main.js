@@ -13,7 +13,8 @@ import { TEXT, Icon, FileIcon, RootIcon, tint } from "./ui.js";
 import { loadIcons } from "./icons.js";
 
 const ROW = 22;
-const MAX = 2000;
+const MAX = 5000; // in all
+const PER_REPO = 1000; // so one big repo can't fill the list
 const DEBOUNCE_MS = 300;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -68,6 +69,7 @@ class VxSearch extends View {
     const gen = ++this.gen;
     if (!q.trim()) {
       this.result = null;
+      this.rowsCache = [];
       this.searching = false;
       cx.notify();
       return;
@@ -79,6 +81,7 @@ class VxSearch extends View {
       } catch (e) {
         this.badRegex = String(e.message ?? e);
         this.result = null;
+        this.rowsCache = [];
         cx.notify();
         return;
       }
@@ -92,7 +95,7 @@ class VxSearch extends View {
         let r = await git(args, { cwd: root.path, timeout: 20000 }).catch(() => null);
         // A git without PCRE: the same search with POSIX extended regexes.
         if (r?.code === 128 && /perl|pcre/i.test(r.stderr ?? "")) r = await git(grepArgs(q, { ...this.opts, include: this.include.value(), perl: false }), { cwd: root.path, timeout: 20000 }).catch(() => null);
-        return { root, ...parseGrep(r?.code === 0 ? r.stdout : "", { maxMatches: MAX }) };
+        return { root, ...parseGrep(r?.code === 0 ? r.stdout : "", { maxMatches: PER_REPO }) };
       }));
       if (gen !== this.gen) return;
       let total = 0;
@@ -109,6 +112,9 @@ class VxSearch extends View {
         out.push(g);
       }
       this.result = { groups: out, total, files: out.reduce((n, g) => n + g.files.length, 0), truncated, q, opts: { ...this.opts } };
+      this.collapsed.clear();
+      this.rowsCache = this.rows();
+      this.resultGen = (this.resultGen ?? 0) + 1;
       this.searching = false;
       cx.notify();
     });
@@ -145,13 +151,21 @@ class VxSearch extends View {
     }
   }
 
+  // A click on a row (the virtual list reports its key; rows can't carry handlers).
+  clickRow(key, cx) {
+    const row = this.rowsCache?.find((r) => r.key === key);
+    if (!row) return;
+    if (row.kind === "match") return showInViewer("vx-files", { root: row.g.root.path, on: null, rel: row.f.rel, line: row.m.line }, baseName(row.f.rel));
+    this.collapsed.has(key) ? this.collapsed.delete(key) : this.collapsed.add(key);
+    this.rowsCache = this.rows();
+    cx.notify();
+  }
+
   drawRow(t, row) {
     const pad = 8 + (row.indent ?? 0) * 14;
-    const flip = (key, cx) => { this.collapsed.has(key) ? this.collapsed.delete(key) : this.collapsed.add(key); cx.notify(); };
     if (row.kind === "root") {
       const n = row.g.files.reduce((a, f) => a + f.matches.length, 0);
       return h_flex().id(row.key).h(ROW).w_full().px(6).gap(5).items_center().cursor_pointer().hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => flip(row.key, cx))
         .child(Icon(this.collapsed.has(row.key) ? "chevron-right" : "chevron-down", 13).text_color(t.muted))
         .child(RootIcon(!this.collapsed.has(row.key), 14))
         .child(div().flex_1().min_w(0).truncate().font_medium().child(row.g.root.name))
@@ -161,7 +175,6 @@ class VxSearch extends View {
       const name = baseName(row.f.rel);
       const dir = row.f.rel.includes("/") ? row.f.rel.slice(0, row.f.rel.lastIndexOf("/")) : "";
       return h_flex().id(row.key).h(ROW).w_full().pl(pad).pr(6).gap(5).items_center().cursor_pointer().hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => flip(row.key, cx))
         .child(Icon(this.collapsed.has(row.key) ? "chevron-right" : "chevron-down", 13).text_color(t.muted))
         .child(FileIcon(this.icons, row.f.rel, { size: 14 }))
         .child(div().flex_none().max_w(170).truncate().child(name))
@@ -169,10 +182,8 @@ class VxSearch extends View {
         .child(div().px(5).rounded(8).bg(t.raised).text_size(TEXT.caption).text_color(t.muted).child(String(row.f.matches.length)));
     }
     const { m, f, g } = row;
-    const sn = matchSnippet(m.text, m.col, this.matchLength(m.text, m.col));
+    const sn = matchSnippet(m.text, m.col, this.matchLength(m.text, m.col), { before: 12 });
     return h_flex().id(row.key).h(ROW).w_full().pl(pad + 18).pr(6).items_center().cursor_pointer().hover((s) => s.bg(t.hover))
-      .tooltip(`${f.rel}:${m.line}`)
-      .on_click(() => showInViewer("vx-files", { root: g.root.path, on: null, rel: f.rel, line: m.line }, baseName(f.rel)))
       .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap().text_size(TEXT.small)
         .child(div().flex_none().whitespace_nowrap().text_color(t.muted).child(sn.head))
         .child(div().flex_none().whitespace_nowrap().rounded(2).bg(tint(t.ansi3, "40")).text_color(t.foreground).child(sn.hit))
@@ -188,11 +199,11 @@ class VxSearch extends View {
       .when(this.opts[key], (el) => el.bg(tint(t.accent, "33")).border_1().border_color(t.accent).text_color(t.foreground))
       .when(!this.opts[key], (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover)))
       .on_click((_e, cx) => this.toggle(key, cx)).child(label);
-    const rows = this.rows();
-    const listId = `search-${this.gen}`;
+    const rows = this.rowsCache ?? [];
+    const listId = `search-${this.resultGen ?? 0}`;
     const note = this.badRegex ? `Invalid regular expression: ${this.badRegex}`
       : this.searching ? "Searching…"
-      : r ? (r.total ? `${r.total}${r.truncated ? "+" : ""} result${r.total === 1 ? "" : "s"} in ${r.files} file${r.files === 1 ? "" : "s"}${r.truncated ? " (showing the first 2,000: narrow the search)" : ""}` : "No results found.")
+      : r ? (r.total ? `${r.total}${r.truncated ? "+" : ""} result${r.total === 1 ? "" : "s"} in ${r.files} file${r.files === 1 ? "" : "s"}${r.truncated ? " (up to 1,000 per repo: narrow the search)" : ""}` : "No results found.")
       : "";
     return v_flex().id("vx-search").size_full().bg(t.chrome).text_color(t.foreground).text_size(TEXT.small)
       .child(v_flex().flex_none().px(8).pt(4).pb(6).gap(4)
@@ -209,7 +220,8 @@ class VxSearch extends View {
           .child(Input.new(this.include).flex_1().h(22).text_size(TEXT.caption))))
         .when(Boolean(note), (el) => el.child(div().pt(2).text_size(TEXT.caption).text_color(this.badRegex ? t.ansi1 : t.dim).child(note))))
       .child(div().id("s-results").flex_1().min_h(0).relative()
-        .child(v_virtual_list(listId, rows.length, ROW, (i) => rows[i]?.key ?? `r${i}`, (range) => rows.slice(range.start, range.end).map((row) => this.drawRow(t, row))).size_full())
+        .child(v_virtual_list(listId, rows.length, ROW, (i) => rows[i]?.key ?? `r${i}`, (range) => rows.slice(range.start, range.end).map((row) => this.drawRow(t, row)))
+          .on_item_click((key, cx) => this.clickRow(key, cx)).size_full())
         .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0()));
   }
 }

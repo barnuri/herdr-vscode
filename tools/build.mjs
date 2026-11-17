@@ -10,16 +10,21 @@ import { CARDS, LAYOUT_CARDS, layoutMods } from "./cards.mjs";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const shared = fs.readdirSync(path.join(root, "shared")).filter((f) => f.endsWith(".js"));
 const mods = fs.readdirSync(path.join(root, "mods")).filter((m) => m.startsWith("vx-"));
-// A mod's own file with a shared file's name would be overwritten: refuse instead. A copy of a
-// shared file starts with that file's first line (its header comment).
+// A mod's own file with a shared file's name would be overwritten: refuse instead. Old copies
+// of a shared file are identical in every mod that has them; a mod's own file is the only one
+// of its name, or differs from the copies the other mods carry.
 const clashes = [];
-for (const mod of mods) {
-  for (const f of shared) {
-    const dst = path.join(root, "mods", mod, f);
-    if (!fs.existsSync(dst)) continue;
-    const head = (p) => fs.readFileSync(p, "utf8").split("\n", 1)[0];
-    if (head(dst) !== head(path.join(root, "shared", f))) clashes.push(`mods/${mod}/${f}`);
+for (const f of shared) {
+  const have = mods.filter((m) => fs.existsSync(path.join(root, "mods", m, f)));
+  const text = new Map(have.map((m) => [m, fs.readFileSync(path.join(root, "mods", m, f), "utf8")]));
+  if (have.length === 1 && mods.length > 1) {
+    if (text.get(have[0]) !== fs.readFileSync(path.join(root, "shared", f), "utf8")) clashes.push(`mods/${have[0]}/${f}`);
+    continue;
   }
+  const counts = new Map();
+  for (const t of text.values()) counts.set(t, (counts.get(t) ?? 0) + 1);
+  const common = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  for (const [m, t] of text) if (t !== common) clashes.push(`mods/${m}/${f}`);
 }
 if (clashes.length) {
   console.error(`build: these mod files share a name with shared/ and would be overwritten:\n  ${clashes.join("\n  ")}\nRename the shared file (or delete the stale copy).`);

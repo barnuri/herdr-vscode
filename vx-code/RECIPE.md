@@ -21,14 +21,14 @@ Top to bottom, on the theme's `canvas`:
 
 - **Activity bar**: clicking a view shows it in the side bar; clicking the shown one hides the side bar. Graph opens the Commit Graph tab of the active repo; Settings opens Herdr's settings.
 - **Active repo**: every view follows the repo you picked (Explorer click, a `repo ▾` switcher) or else the repo of the focused terminal.
-- **Go to File** (⌘P or the command center): a popup under the title bar over every root's `git ls-files`, ranked by name hits first; ↑↓ Enter; empty shows recently opened; typing `>` opens Herdr's command palette.
+- **Quick Open** (⌘P or the command center): a popup over the command center (up to 720px wide, sized to its rows, 24px rows, 18 shown). Input: VS Code's placeholder, `accent` border, no icon. Rows: 16px icon, name in `foreground` with matched letters `accent` and semibold, then `repo • folder` in `dim`; the first row of a group carries its label on the right (`recently opened`, `file results`, `recently used`, `other commands`, `symbols (n)`) and a top border; the selected row (`selected`) shows Open to the Side and, for a recent file, × Remove from Recently Opened. Modes: files of every root (`git ls-files`, words must all match, name hits first; `name:42` opens at line 42), `:` line in the active file, `@` symbols of it (classes, functions, methods, types, consts, headings; ⌘⇧O), `>` Herdr's commands (`commands()`, those needing no arguments, plus bound actions like `pane.split:right`) and vx's own, with their key from `keys()`, recently used first, `%` text across every root (`git grep`), `?` the list of prefixes. ↑↓ wrap, PageUp / PageDown, Enter, ⌘Enter to the side, Esc. Every file previewed anywhere joins "recently opened" (`vx.goto.recent`).
 - **Search** (⌘⇧F): `git grep --untracked` in each root (respects `.gitignore`, skips binaries); Aa / ab / .* toggles (regex is Perl-compatible), ⋯ for "files to include" (`*.ts, src/`); results by repo › file › line with the match highlighted, capped at 2,000; a match opens the preview at that line.
 - **Tabs**: the file and diff tabs are reused previews (italic); double-click or Keep Open makes one stay, and the next file opens a new preview; editing keeps it too. Drag to reorder, right-click for Keep Open, Pin / Unpin (pinned tabs are icon-only, on the left), Rename, Close, Close Others / to the Right (click twice), Put Away. ⋯ lists every tab with a filter; ⌘E is the same list in recent order with the previous tab preselected. Wheel or swipe switches tabs.
 - **Preview**: syntax colours, changed-line bars, blame with heatmap, file / line history; ✎ switches to Herdr's code editor; ⌘S (or Save) writes the file only if it didn't change on disk since; Revert drops the edits.
 - **Timeline**: the commits of the file in the active tab; a click opens that commit's diff. **NPM Scripts**: every script of the active repo's `package.json`; a click or ▶ runs it in a new tab.
 - **Bottom panel** (⌘J, `` ctrl-` ``): Terminal starts a shell in the active repo the first time (`hc run`, label `vx.panel=1`, never a tab), keeps it across hide / show, hides when the last one exits. Problems lists conflicts, failing pipelines, branches behind and unreadable repos (a click opens that view) and, after **Run checks**, the output of the repo's `typecheck` and `lint` scripts parsed into file:line rows (tsc, ESLint and `file:line:col:` formats); a click opens the file at the line. Ports lists `lsof` listeners with their folder; 🌐 opens `http://localhost:port`, ■ stops the process after asking.
 - **Status bar**: ✕ ⚠ opens Problems, the port count opens Ports, the pipeline opens CI / CD, the branch copies itself, ↑↓ offers fetch / pull / push (asks first).
-- **Keys** (`keys.json` section `layout:vx-code`): ⌘P, ⌘⇧F, ⌘⇧E, ⌘⇧G, ⌘J / `` ctrl-` ``, ⌘E, ⌘\ split right, ⌘S save; ⌘B toggles the side bar (Herdr's).
+- **Keys** (`keys.json` section `layout:vx-code`): ⌘P, ⌘⇧O, ⌘⇧F, ⌘⇧E, ⌘⇧G, ⌘J / `` ctrl-` ``, ⌘E, ⌘\ split right, ⌘S save; ⌘B toggles the side bar (Herdr's).
 
 ## Built from
 
@@ -45,6 +45,9 @@ Top to bottom, on the theme's `canvas`:
 - Draw the card border in `raised`, not `border`: in One Monokai `border` is darker than the canvas and the edge disappears.
 - Mods hidden in a stack or a hidden column may not get key commands: route ⌘J through vx-activity (always shown), and let the panel header start a shell when it appears.
 - Name shared files so they can't collide with a mod's own (`tools/build.mjs` refuses).
+- A virtual list's rows can't carry handlers (click, hover, tooltip): they draw nothing. Use the list's `on_item_click(key)`, or draw a small window of rows yourself (Quick Open draws its 18 visible rows and scrolls them on the wheel).
+- Elements are single-use: cache row *data*, never elements (an icon kept in a cached row fails the next render with "element was already added to a parent").
+- Keep heavy work out of render: Quick Open ranks ~15,000 paths only when the query changes, in slices of 2,500 between frames, with lowercased paths prepared once; a render that runs too long shows "This view could not be re-rendered … interrupted".
 - `git grep -E` doesn't know `\w`: use `-P`, falling back to `-E` when git has no PCRE.
 - Each layout edit by vx-panel rewrites the installed layout file, so `sync.sh` only reinstalls the layout when the source changed.
 
