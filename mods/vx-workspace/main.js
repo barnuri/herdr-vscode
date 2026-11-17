@@ -335,7 +335,7 @@ class VxWorkspace extends View {
       .when(narrow, (el) => el.justify_center().child(Icon("layers", 13)))
       .when(!narrow, (el) => el
         .child(Icon("layers", 13).text_color(t.dim))
-        .child(div().flex_1().min_w(0).pl(6).truncate().font_medium().text_size(TEXT.body).child(ws ? ws.name : "Workspace"))
+        .child(div().flex_1().min_w(0).pl(6).truncate().font_medium().text_size(TEXT.body).child(ws ? (ws.file ? `${ws.name} (Workspace)` : ws.name) : "Workspace"))
         .when(Boolean(ws), (e2) => e2
           .child(IconButton({ id: "ws-add", icon: "plus", label: "Add Folder to Workspace…", size: 22, onClick: () => post({ cmd: "addFolder" }) }))
           .child(IconButton({ id: "ws-dots", icon: "dot-files", label: this.showDots ? "Hide dotfiles" : "Show dotfiles", active: !this.showDots, size: 22, onClick: (cx) => this.toggleDots(cx) }))

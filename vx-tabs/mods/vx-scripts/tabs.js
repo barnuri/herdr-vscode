@@ -6,11 +6,19 @@ import { panes, spaces, run, shared, setShared } from "herdr";
 
 const PENDING_MS = 2000;
 
+// Tabs you kept (double-click a preview in vx-tabs): they hold their own file and are never
+// reused for the next preview. shared("vx.tabs.kept") = { [tabId]: { mod, value } }.
+export const keptTabs = () => shared("vx.tabs.kept") ?? {};
+
 export function viewerTab(mod, spaceId) {
   const space = spaces().find((s) => s.id === spaceId);
   const ids = new Set((space?.tabs ?? []).map((t) => t.id));
-  return panes().find((p) => p.mod === mod && ids.has(p.tab))?.tab ?? null;
+  const kept = keptTabs();
+  return panes().find((p) => p.mod === mod && ids.has(p.tab) && !kept[p.tab])?.tab ?? null;
 }
+
+// Is this tab the reused (italic) preview of a viewer mod?
+export const isPreviewTab = (tabId, mod) => ["vx-files", "vx-changes"].includes(mod) && !keptTabs()[tabId];
 
 export function showInViewer(mod, value, name) {
   const space = spaces().find((s) => s.active);

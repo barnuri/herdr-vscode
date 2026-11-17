@@ -6,7 +6,9 @@ A bottom bar for Herdr: the repo and branch you're working in, ahead / behind wi
 
 ## What you see
 
-28px, `chrome`, a top border: folder (an accent layers icon when it's the repo you picked rather than the terminal's), branch (click copies), ↑↓ (menu: Push…, Pull… `--ff-only`, Fetch…), ✎ changed `ansi3`, + staged `ansi2`, ⚠ conflicts `ansi1`, ▣ stashes `dim`, `clean`. On a Claude Code pane, right side: model · effort and `ctx` / `5h` / `7d` meters (44×4; `ansi3` at 80%, `ansi1` at 95%).
+`props { style: "vscode" }` (the vx-code layout): `canvas`, no border, 12px text and 14px icons, a remote glyph first, `✕ errors ⚠ warnings` (opens Problems) and the listening-port count (opens Ports) after the repo chips, and on the right the repo's last pipeline (CI icon in its state colour + `passed` / `failed` / …) and the workspace name.
+
+Default: 28px, `chrome`, a top border: folder (an accent layers icon when it's the repo you picked rather than the terminal's), branch (click copies), ↑↓ (menu: Push…, Pull… `--ff-only`, Fetch…), ✎ changed `ansi3`, + staged `ansi2`, ⚠ conflicts `ansi1`, ▣ stashes `dim`, `clean`. On a Claude Code pane, right side: model · effort and `ctx` / `5h` / `7d` meters (44×4; `ansi3` at 80%, `ansi1` at 95%).
 
 ## How it behaves
 

@@ -13,6 +13,9 @@ export const tint = (color, alpha = "26") => (/^#[0-9a-f]{6}/i.test(color ?? "")
 
 export const Icon = (name, size = 14) => svg(UI(name)).size(size).flex_none();
 
+// A workspace root, as the Material Icon Theme draws one in VS Code: a ring, dotted when closed.
+export const RootIcon = (open = false, size = 14) => image(`mods/vx-icons/icons/folder-root${open ? "-open" : ""}.svg`).size(size).flex_none();
+
 // A file or folder picture from vx-icons' table; the plain icon when the table isn't loaded.
 export function FileIcon(table, path, { dir = false, open = false, size = 14, color } = {}) {
   const t = theme();

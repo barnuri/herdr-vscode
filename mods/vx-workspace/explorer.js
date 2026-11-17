@@ -5,7 +5,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, exec, shared } from "herdr";
 import { active, setActive, git } from "./ws.js";
-import { TEXT, Icon, FileIcon, markColor, stateLook } from "./ui.js";
+import { TEXT, Icon, FileIcon, RootIcon, markColor, stateLook } from "./ui.js";
 import { showInViewer } from "./tabs.js";
 
 const ROW = 22;
@@ -202,7 +202,7 @@ export const explorerMethods = {
       })
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openMenu({ kind: "root", root, index, count: this.ws.roots.length }); })
       .child(Icon(open ? "chevron-down" : "chevron-right", 12).text_color(t.dim))
-      .child(FileIcon(this.icons, root.name, { dir: true, open, size: 15 }))
+      .child(RootIcon(open, 15))
       .child(div().flex_1().min_w(0).truncate().font_medium().text_color(isActive ? t.foreground : t.muted).child(root.name))
       .when(Boolean(s?.branch), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(TEXT.caption).text_color(t.dim).child(s.branch)))
       .child(div().w(7).flex_none().h(7).rounded(4).when(Boolean(dot), (el) => el.bg(dot)));

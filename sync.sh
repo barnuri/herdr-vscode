@@ -1,8 +1,14 @@
 #!/bin/sh
 # Installs the vx mods into the Herdr app, which hot-reloads them.
 #
-#   ./sync.sh              every mod in mods/
-#   ./sync.sh vx-status    just these
+#   ./sync.sh                     every mod in mods/, the themes, and our layouts you have
+#   ./sync.sh vx-status           just these mods (themes and layouts too)
+#   ./sync.sh --layout vx-code    also add that layout (layouts/vx-code.json + .svg)
+#
+# Themes (themes/*.json) are copied when they differ. A layout is copied when it's new (asked
+# for with --layout) or when the repo's file changed since the last sync: Herdr keeps clicks
+# (sizes, hidden) apart, but vx-panel edits the installed layout itself (layout.set), so an
+# unchanged source never overwrites it.
 #
 # Each mod is put together in a hidden staging folder (Herdr doesn't watch hidden folders) with
 # its mod.json and a copy of shared/ (a mod can only import files from its own folder), checked
@@ -15,8 +21,16 @@ home_dir=${HERDR_APP_HOME:-"$HOME/.config/herdr-app"}
 stage="$home_dir/mods/.vx-stage"
 [ -d "$home_dir/mods" ] || { echo "no Herdr app home at $home_dir" >&2; exit 1; }
 
+add_layouts=""
+names=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --layout) add_layouts="$add_layouts $2"; shift 2 ;;
+    *) names="$names $1"; shift ;;
+  esac
+done
 node "$here/tools/build.mjs"
-if [ $# -gt 0 ]; then names="$*"; else names=$(cd "$here/mods" && ls -d vx-* | tr '\n' ' '); fi
+[ -n "$names" ] || names=$(cd "$here/mods" && ls -d vx-* | tr '\n' ' ')
 rm -rf "$stage" && mkdir -p "$stage"
 trap 'rm -rf "$stage"' EXIT
 status=0
@@ -48,5 +62,29 @@ for name in $names; do
   if [ -d "$target" ]; then mv "$target" "$stage/.old-$name"; fi
   mv "$dst" "$target"
   echo "synced $name"
+done
+
+# Themes: copy when different (atomic: temp file, then rename).
+mkdir -p "$home_dir/themes"
+for f in "$here"/themes/*.json; do
+  [ -f "$f" ] || continue
+  n=$(basename "$f")
+  if cmp -s "$f" "$home_dir/themes/$n"; then echo "same   theme $n"; continue; fi
+  cp "$f" "$home_dir/themes/.$n.tmp" && mv "$home_dir/themes/.$n.tmp" "$home_dir/themes/$n" && echo "synced theme $n"
+done
+
+# Layouts: ours that are installed (or asked for), when the source changed since last sync.
+seen="$home_dir/layouts/.vx-synced"
+mkdir -p "$seen"
+for f in "$here"/layouts/*.json; do
+  n=$(basename "$f" .json)
+  installed="$home_dir/layouts/$n.json"
+  asked=0
+  for a in $add_layouts; do [ "$a" = "$n" ] && asked=1; done
+  if [ ! -f "$installed" ] && [ $asked = 0 ]; then continue; fi
+  if [ -f "$installed" ] && [ $asked = 0 ] && cmp -s "$f" "$seen/$n.json"; then echo "same   layout $n"; continue; fi
+  [ -f "$here/layouts/$n.svg" ] && cp "$here/layouts/$n.svg" "$home_dir/layouts/$n.svg"
+  cp "$f" "$home_dir/layouts/.$n.json.tmp" && mv "$home_dir/layouts/.$n.json.tmp" "$installed" && cp "$f" "$seen/$n.json"
+  echo "synced layout $n"
 done
 exit $status

@@ -7,7 +7,7 @@ import { git } from "./ws.js";
 import { diffRows, splitRows } from "./git-core.js";
 import { lexLine, languageOf, syntaxColors } from "./syntax-core.js";
 import { TEXT, IconButton, FileIcon, Message, Badge, codeFont, codeSize, tint } from "./ui.js";
-import { viewerValue } from "./tabs.js";
+import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
 
 const MOD = "vx-changes";
 const MAX_ROWS = 6000;
@@ -17,13 +17,23 @@ export const diffMethods = {
     this.viewSpace = p.space;
     // A tab opened directly (herdr-app do tab.new --mod vx-changes --props {...}) names its diff.
     this.propsTarget = p.target?.root && p.target?.path ? p.target : null;
+    this.fixed = Boolean(p.fixed && this.propsTarget);
     this.split = localStorage.getItem("split") === "1";
     cx.timer.every(2000, (cx) => this.syncDiff(cx, true));
     this.syncDiff(cx);
   },
 
   syncDiff(cx, poll = false) {
-    const v = viewerValue(MOD, this.viewSpace) ?? this.propsTarget;
+    // Kept in place (vx-tabs): from then on this tab shows its own diff.
+    if (!this.fixed) {
+      this.myTab ??= viewerTab(MOD, this.viewSpace);
+      const kept = this.myTab ? keptTabs()[this.myTab] : null;
+      if (kept?.value?.path) {
+        this.fixed = true;
+        this.propsTarget = kept.value;
+      }
+    }
+    const v = this.fixed ? this.propsTarget : viewerValue(MOD, this.viewSpace) ?? this.propsTarget;
     if (!v?.path) return;
     const key = `${v.on ?? ""}|${v.root}|${v.scope}|${v.sha ?? v.ref ?? v.base ?? ""}|${v.path}`;
     if (key !== this.diffKey) {

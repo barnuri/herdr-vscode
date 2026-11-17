@@ -3,13 +3,16 @@
 //   list       every script (root + workspace packages), filter, run in a tab or beside,
 //              and the package manager: detected from packageManager / lockfile, switchable
 //              among the ones installed here
+//   section    props { section: "npm", block }: VS Code's NPM Scripts section in the side bar,
+//              every script of the context repo with ▶ run
 //   mod.open:vx-scripts opens the list directly (for a key).
 // A script can run anything: the list shows each command before you run it.
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { theme, props, openOverlay, closeOverlay, exec, home, checking } from "herdr";
 import { ctx, contextKey, repoTop, baseName } from "./ws.js";
-import { TEXT, Icon, codeFont } from "./ui.js";
+import { TEXT, Icon, IconButton, codeFont } from "./ui.js";
+import { SectionHead, sectionOpen } from "./side-sections.js";
 
 const MOD = "vx-scripts";
 import { PM_ICON, store, save, findProject, pmOf, keyOf, allScripts, chosenOf, runScript } from "./scripts.js";
@@ -28,6 +31,7 @@ class VxScripts extends View {
       if (!this.project && !checking()) this.detect(cx, true);
       return;
     }
+    if (p.section) this.section = p.block ?? "npm";
     if (checking()) return;
     cx.timer.every(400, (cx) => this.detect(cx));
     cx.timer.every(15000, (cx) => { this.key = null; this.detect(cx); });
@@ -121,8 +125,40 @@ class VxScripts extends View {
         .child(div().id("sc-open").text_color(t.accent).cursor_pointer().on_click(() => { this.close(); if (!p.on) exec("open", [`${p.root}/package.json`]).catch(() => {}); }).child("open package.json")));
   }
 
+  renderSection() {
+    const t = theme();
+    const p = this.project;
+    const open = sectionOpen(this.section);
+    const root = v_flex().id("vx-npm").size_full().bg(t.chrome).text_color(t.foreground).overflow_hidden()
+      .child(SectionHead(t, { block: this.section, title: p ? `NPM Scripts · ${p.name}` : "NPM Scripts", open, count: p ? allScripts(p).length : null,
+        right: [p ? IconButton({ id: "npm-all", icon: "search", label: "Filter scripts…", size: 18, onClick: () => this.openMenu() }) : null] }));
+    if (!open) return root;
+    if (!p) return root.child(div().px(20).py(6).text_size(TEXT.small).text_color(t.dim).child("No package.json with scripts in this repo."));
+    const pm = pmOf(p);
+    const rows = [];
+    for (const g of p.groups) {
+      if (!g.scripts.length) continue;
+      if (p.groups.length > 1) rows.push(h_flex().id(`npm-g-${g.dir}`).h(22).flex_none().pl(14).gap(6).items_center().text_size(TEXT.caption).text_color(t.dim)
+        .child(image(PM_ICON(pm)).size(12)).child(div().truncate().child(g.rel ?? g.name)));
+      for (const sc of g.scripts) {
+        const x = { g, s: sc, key: keyOf(g, sc) };
+        rows.push(h_flex().id(`npm-${x.key}`).h(22).flex_none().pl(p.groups.length > 1 ? 30 : 20).pr(6).gap(6).items_center().cursor_pointer()
+          .hover((st) => st.bg(t.hover)).tooltip(`${pm} run ${sc.name}\n${sc.cmd}`)
+          .on_click(() => runScript(p, x))
+          .child(Icon("terminal", 12).text_color(t.dim))
+          .child(div().flex_none().max_w(150).truncate().text_size(TEXT.small).child(sc.name))
+          .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).font_family(codeFont()).text_color(t.dim).child(sc.cmd))
+          .child(div().id(`npm-run-${x.key}`).size(18).flex_none().flex().items_center().justify_center().rounded(4).text_color(t.ansi2)
+            .hover((st) => st.bg(t.raised)).tooltip("Run in a new tab").on_click((_e, cx) => { cx.stop_propagation(); runScript(p, x); })
+            .child(Icon("play", 10))));
+      }
+    }
+    return root.child(v_flex().id("npm-rows").flex_1().min_h(0).overflow_y_scrollbar().children(rows));
+  }
+
   render() {
     if (this.isMenu) return this.renderMenu();
+    if (this.section) return this.renderSection();
     const t = theme();
     const p = this.project;
     const root = h_flex().id(MOD).size_full().px(8).gap(2).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border);

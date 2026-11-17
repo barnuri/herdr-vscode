@@ -10,6 +10,15 @@ Herdr's own panels follow the focused terminal's folder, so a terminal sitting i
 repos shows nothing useful. herdr-vx reads your `*.code-workspace` (or a folder of repos) and keeps
 one **active repo** that every panel follows: the one you pick, else the repo your terminal is in.
 
+Two layouts:
+
+- **`vx-code`**: the whole window laid out like the current VS Code: title bar with a command
+  center (Go to File), activity bar, side bar, editor and bottom panel as rounded cards, and a status
+  bar. Ships the **One Monokai** theme. See [vx-code/RECIPE.md](vx-code/RECIPE.md).
+- **`vx`**: Herdr's own window with the vx panels on the right.
+
+![vx-code](vx-code/preview.png)
+
 ## What's in it
 
 | Mod | Where | What |
@@ -18,10 +27,14 @@ one **active repo** that every panel follows: the one you pick, else the repo yo
 | **vx-changes** | Changes panel | Staged / unstaged / conflicts, stage and unstage, commit and amend, plus GitLens-style Commits (expand for files), Branches, Remotes, Stashes, Tags, and Search & Compare. |
 | **vx-ci** | CI panel (⌘⌥C) | GitLab pipelines (via `glab`) and GitHub Actions runs (via `gh`): runs, jobs by stage, retry, cancel, run a pipeline or dispatch a workflow, download artifacts. |
 | **vx-graph** | centre tab | Commit Graph: branch lanes, branch and tag labels, commit details and their diffs. |
-| **vx-files** | centre tab | File preview: syntax colours, Markdown, images, and GitLens blame with an age heatmap, file history and line history. |
-| **vx-tabs** | tab bar | Tabs, `+`, the package-script runner, and Files · Changes · CI · Graph on the right. |
-| **vx-scripts** | popup | Every `package.json` script (workspace packages too), run in a new tab or beside you, with npm / pnpm / yarn / bun detected and switchable. |
+| **vx-files** | centre tab | File preview: syntax colours, Markdown, images, GitLens blame with an age heatmap, file and line history, and **Edit** (Herdr's code editor, ⌘S saves). Also the Timeline side-bar section. |
+| **vx-tabs** | tab bar | Tabs with icons and repo context, italic preview tabs (double-click keeps one), pinned tabs, all-tabs list and ⌘E switcher, the package-script runner; in vx-code also the breadcrumbs. |
+| **vx-scripts** | popup | Every `package.json` script (workspace packages too), run in a new tab or beside you, with npm / pnpm / yarn / bun detected and switchable. Also the NPM Scripts side-bar section. |
 | **vx-status** | bottom bar | Repo, branch, ↑↓ with fetch / pull / push, changes; with the Claude Code plugin, the model and context / usage meters. |
+| **vx-search** | side bar (vx-code) | Search across every repo of the workspace (`git grep`): Match Case, Whole Word, Regex, files to include; a match opens the file at its line. |
+| **vx-panel** | bottom panel (vx-code) | Problems (conflicts, failing pipelines, branches behind, and **Run checks**: the repo's typecheck / lint scripts as file:line rows), Terminal (shells that never become tabs), Ports (listening programs: open, or stop after asking). |
+| **vx-activity** | activity bar (vx-code) | Explorer, Search, Source Control, CI, Spaces, Agents with badges; Graph and Settings. Also the side bar's title. |
+| **vx-titlebar** | title bar (vx-code) | Workspace name, ← → through visited tabs, the command center (Go to File, `>` for commands), layout toggles. |
 | **vx-icons** | assets | [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme) icons (MIT) and the UI icons. |
 
 Changes, CI and Graph each have a `repo ▾` switcher in their header.
@@ -36,17 +49,24 @@ Paste this into your agent inside Herdr:
 Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/sardar099/herdr-vx
 ```
 
+For the VS Code layout: `... then add this layout: https://github.com/sardar099/herdr-vx/tree/main/vx-code`.
+
 Or by hand, from a clone:
 
 ```sh
-cp layouts/vx.json layouts/vx.svg ~/.config/herdr-app/layouts/
-cp -R mods/vx-* ~/.config/herdr-app/mods/
-herdr-app do layout.switch '{"name":"vx"}'
+./sync.sh --layout vx-code      # every mod, the themes, and the layout (or --layout vx)
+herdr-app do layout.switch '{"name":"vx-code"}'
 ```
+
+vx-code's keys are in [vx-code/keys.json](vx-code/keys.json) (merge its `layout:vx-code` section
+into `~/.config/herdr-app/keys.json`): ⌘P Go to File, ⌘⇧F Search, ⌘⇧E Explorer, ⌘⇧G Source
+Control, ⌘J or `` ctrl-` `` the panel, ⌘E switch tab, ⌘\ split, ⌘S save the edited file. One Monokai is
+in the theme picker once `themes/one-monokai.json` is in `~/.config/herdr-app/themes/`.
 
 **Just one piece?** Each folder at the top of this repo is its own gallery entry with its own
 recipe: `vx-workspace/` (Explorer + preview tab), `vx-changes/` (+ Commit Graph), `vx-ci/`,
 `vx-tabs/` (+ script runner), `vx-status/`, and `vx-icons/` (the icon pack every vx mod needs).
+`vx-code/` is the VS Code layout with every mod it uses.
 
 Your own layout stays as it was; `ctrl-shift-l` (⌘⇧L on macOS) switches back. Optional key for CI
 (add to `~/.config/herdr-app/keys.json`): `"cmd-alt-c": "mod.open:vx-ci"`.
@@ -72,6 +92,11 @@ Anything that changes a repo or CI asks first: push, pull, fetch, retry, cancel,
 dispatch, switch branch, apply stash. Stage and unstage touch only the index; commit is a button.
 Nothing here deletes files or discards changes.
 
+What vx-code adds: **Edit** writes the file you're editing only when you press Save (⌘S), and
+refuses if the file changed on disk since you opened it. **Run checks** runs the repo's own
+`typecheck` / `lint` scripts from `package.json` when you click it. **Ports** lists listening
+programs with `lsof`; Stop sends SIGTERM and asks first. Search is read-only (`git grep`).
+
 ## Development
 
 `shared/` holds the code every mod uses; `tools/build.mjs` copies it into each mod folder (a Herdr mod
@@ -80,7 +105,7 @@ pure and tested under node.
 
 ```sh
 npm test       # node --test tests/
-./sync.sh      # build, herdr-app check, install into ~/.config/herdr-app/mods (atomic; unchanged mods skipped)
+./sync.sh      # build, herdr-app check, install mods + themes + our installed layouts (atomic; unchanged skipped)
 ```
 
 How it's put together, for an agent rebuilding it: [RECIPE.md](RECIPE.md).

@@ -1,17 +1,21 @@
 // The preview tab: one per space, showing the file last picked in Files. Code is drawn as rows
 // with syntax colours and a bar on lines changed since HEAD; Markdown renders (Code toggles it
 // back); images show through a copy in this mod's cache (image() loads only from Herdr's folder).
+// Edit (✎) swaps the rows for Herdr's code editor; ⌘S saves (vx-files.save), refusing to
+// overwrite a file that changed on disk. Editing keeps the tab (it stops being the reused
+// preview), and the tab bar shows a dot while there are unsaved changes (shared "vx.dirty").
+// A viewer value with { line } (Search, Problems) selects and scrolls to that line.
 import { div, image } from "gpui-kit";
-import { v_flex, h_flex, v_virtual_list, Scrollbar, TextView } from "gpui-base";
-import { theme, readTextFile, exec, appHome } from "herdr";
-import { git } from "./ws.js";
+import { v_flex, h_flex, v_virtual_list, Scrollbar, TextView, VirtualListScrollHandle, EditorState, Editor } from "gpui-base";
+import { theme, readTextFile, writeTextFile, exec, appHome, settings, shared, setShared, notify } from "herdr";
+import { git, bump } from "./ws.js";
 import { parseBlame, heat, shortAge, NOT_COMMITTED } from "./blame-core.js";
 import { parseLog, LOG_FORMAT } from "./git-core.js";
 import { showInViewer } from "./tabs.js";
 import { parseHunks } from "./git-core.js";
 import { lexLines, languageOf, syntaxColors } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, codeFont, codeSize, tint } from "./ui.js";
-import { viewerValue } from "./tabs.js";
+import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
 
 const BLAME_W = 230;
 
@@ -28,6 +32,9 @@ export const previewMethods = {
     this.viewSpace = p.space;
     // A tab opened directly (herdr-app do tab.new --mod vx-files --props {...}) names its file.
     this.propsFile = p.file?.root && p.file?.rel ? p.file : null;
+    // A kept tab (props.fixed) shows its own file and never follows the space's preview.
+    this.fixed = Boolean(p.fixed && this.propsFile);
+    this.scroller = VirtualListScrollHandle.new();
     this.mdCode = false;
     this.blameOn = p.blame === true || localStorage.getItem("blame") === "1";
     if (Number.isInteger(p.line)) this.selLine = p.line;
@@ -36,9 +43,41 @@ export const previewMethods = {
     this.syncPreview(cx);
   },
 
+  // This copy's tab: the space's reused preview tab, until it's kept (in place: from then on it
+  // shows its own file and the next preview opens a new tab).
+  followKept() {
+    if (this.fixed) return;
+    this.myTab ??= viewerTab(MOD, this.viewSpace);
+    const kept = this.myTab ? keptTabs()[this.myTab] : null;
+    if (kept?.value?.rel) {
+      this.fixed = true;
+      this.propsFile = kept.value;
+    }
+  },
+
+  keepTab() {
+    if (this.fixed || !this.file) return;
+    this.myTab ??= viewerTab(MOD, this.viewSpace);
+    if (!this.myTab) return;
+    const value = { root: this.file.root, on: this.file.on ?? null, rel: this.file.rel };
+    setShared("vx.tabs.kept", { ...keptTabs(), [this.myTab]: { mod: MOD, value } });
+    this.fixed = true;
+    this.propsFile = value;
+  },
+
   syncPreview(cx, poll = false) {
-    const v = viewerValue(MOD, this.viewSpace) ?? this.propsFile;
+    this.followKept();
+    // Opened straight onto a file (tab.new with props.file): share it as the space's preview, so
+    // the tab bar, breadcrumbs and Timeline see it.
+    if (!this.fixed && this.propsFile && !viewerValue(MOD, this.viewSpace) && this.viewSpace)
+      setShared(`${MOD}.view`, { ...(shared(`${MOD}.view`) ?? {}), [this.viewSpace]: { ...this.propsFile, at: Date.now() } });
+    const v = this.fixed ? this.propsFile : viewerValue(MOD, this.viewSpace) ?? this.propsFile;
     if (!v?.rel) return;
+    // A jump to a line (Search, Problems): select it and scroll there once the text is in.
+    if (Number.isInteger(v.line) && v.at && v.at !== this.jumpAt && !this.fixed) {
+      this.jumpAt = v.at;
+      this.jumpLine = v.line;
+    }
     const key = `${v.on ?? ""}|${v.root}/${v.rel}`;
     if (key !== this.fileKey) {
       this.fileKey = key;
@@ -49,6 +88,7 @@ export const previewMethods = {
       this.hunks = [];
       this.mdCode = false;
       this.selLine = this.firstFileSeen ? null : this.selLine ?? null;
+      this.editor = null;
       this.firstFileSeen = true;
       this.blame = null;
       this.heat = null;
@@ -82,6 +122,11 @@ export const previewMethods = {
           this.problem = "Too large or unreadable to preview.";
           return;
         }
+        if (this.jumpLine && text === this.text && this.lines) {
+          this.selLine = Math.min(this.jumpLine, this.lines.length);
+          this.scroller.scroll_to_item(this.selLine - 1, "center");
+          this.jumpLine = null;
+        }
         if (text === null) this.problem = "This file is no longer there.";
         else if (text.includes("\0")) this.problem = "Binary file.";
         else if (text !== this.text) {
@@ -93,6 +138,11 @@ export const previewMethods = {
           this.runs = this.lines.length <= 6000 ? lexLines(this.lines, languageOf(f.rel)) : null;
           if (this.blameOn) this.loadBlame(cx);
           if (this.history?.kind === "file" && !this.history.items) this.openHistory("file", cx);
+          if (this.jumpLine) {
+            this.selLine = Math.min(this.jumpLine, this.lines.length);
+            this.scroller.scroll_to_item(this.selLine - 1, "center");
+            this.jumpLine = null;
+          }
           if (this.wantHistory) {
             this.openHistory(this.wantHistory, cx);
             this.wantHistory = null;
@@ -228,13 +278,81 @@ export const previewMethods = {
             const out = [];
             for (let i = range.start; i < range.end; i++) out.push(row(i));
             return out;
-          }).on_item_click((key, cx) => {
+          }).track_scroll(this.scroller).on_item_click((key, cx) => {
             const n = Number(key.slice(1)) + 1;
             this.selLine = this.selLine === n ? null : n;
             if (this.history?.kind === "line" && this.selLine) this.openHistory("line", cx);
             cx.notify();
           }).size_full())))
       .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0());
+  },
+
+  // ── editing ────────────────────────────────────────────────────────────────────────────
+  dirtyKey() {
+    return this.file ? `${this.file.root}/${this.file.rel}` : null;
+  },
+
+  setDirty(on) {
+    const key = this.dirtyKey();
+    if (!key) return;
+    const all = shared("vx.dirty") ?? {};
+    if (Boolean(all[key]) === on) return;
+    const next = { ...all };
+    if (on) next[key] = true;
+    else delete next[key];
+    setShared("vx.dirty", next);
+  },
+
+  startEdit(cx) {
+    if (!this.file || this.file.on || this.text === undefined || this.text === null) return;
+    this.keepTab();
+    const C = syntaxColors(theme());
+    this.editor = EditorState.new({
+      language: languageOf(this.file.rel) ?? undefined, value: this.text, font_family: codeFont(), font_size: codeSize(),
+      syntax: { keyword: C.keyword, string: C.string, comment: C.comment, function: C.fn, type: C.type, number: C.number, constant: C.constant },
+    });
+    this.saved = this.text;
+    this.editor.on("change", (_e, cx) => { this.setDirty(this.editor.value() !== this.saved); cx.notify(); });
+    this.editor.focus();
+    cx.notify();
+  },
+
+  stopEdit(cx) {
+    if (this.editor && this.editor.value() !== this.saved) {
+      notify({ title: "Unsaved changes", body: "Save (⌘S) or Revert first.", timeout: 3000 });
+      return;
+    }
+    this.editor?.release();
+    this.editor = null;
+    this.setDirty(false);
+    cx.notify();
+  },
+
+  revert(cx) {
+    if (!this.editor) return;
+    this.editor.set_value(this.saved);
+    this.setDirty(false);
+    cx.notify();
+  },
+
+  save(cx) {
+    const f = this.file;
+    if (!this.editor || !f) return;
+    const text = this.editor.value();
+    if (text === this.saved) return;
+    cx.spawn(async (cx) => {
+      try {
+        await writeTextFile(`${f.root}/${f.rel}`, text, this.saved);
+        this.saved = text;
+        this.text = text;
+        this.setDirty(false);
+        bump(f.root);
+        notify({ title: `Saved ${f.rel.split("/").pop()}`, level: "success", timeout: 1500 });
+      } catch (e) {
+        notify({ title: "Not saved", body: /stale|changed|expected/i.test(String(e)) ? "The file changed on disk since you opened it. Revert to load it, then edit again." : String(e?.message ?? e), level: "error", timeout: 8000 });
+      }
+      cx.notify();
+    });
   },
 
   renderPreview() {
@@ -257,6 +375,11 @@ export const previewMethods = {
         .child(IconButton({ id: "pv-blame", icon: "blame", label: this.blameOn ? "Hide blame" : "Blame (author · age per line, heatmap)", active: Boolean(this.blameOn), onClick: (cx) => this.toggleBlame(cx), size: 22 }))
         .child(IconButton({ id: "pv-hist", icon: "history", label: "File history", active: this.history?.kind === "file", onClick: (cx) => (this.history?.kind === "file" ? ((this.history = null), cx.notify()) : this.openHistory("file", cx)), size: 22 }))
         .child(IconButton({ id: "pv-lhist", icon: "line-history", label: this.selLine ? `History of line ${this.selLine}` : "Click a line, then show its history", disabled: !this.selLine, active: this.history?.kind === "line", onClick: (cx) => this.openHistory("line", cx), size: 22 })))
+      .when(!f.on && !IMAGE.test(f.rel) && (!md || this.mdCode) && this.text !== undefined, (el) => el
+        .when(Boolean(this.editor) && this.editor?.value() !== this.saved, (e2) => e2
+          .child(div().id("pv-revert").px(8).h(22).flex().items_center().rounded(5).cursor_pointer().text_size(TEXT.caption).text_color(t.muted).hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.revert(cx)).child("Revert"))
+          .child(div().id("pv-save").px(8).h(22).flex().items_center().rounded(5).cursor_pointer().text_size(TEXT.caption).bg(t.solid ?? t.accent).text_color(t.solid_foreground ?? t.accent_foreground).on_click((_e, cx) => this.save(cx)).child("Save ⌘S")))
+        .child(IconButton({ id: "pv-edit", icon: "pencil", label: this.editor ? "Stop editing" : "Edit this file", active: Boolean(this.editor), onClick: (cx) => (this.editor ? this.stopEdit(cx) : this.startEdit(cx)), size: 22 })))
       .when(!f.on, (el) => el.child(IconButton({ id: "pv-open", icon: "external", label: "Open in default app", onClick: () => exec("open", ["--", abs]).catch(() => {}), size: 22 }))));
     if (this.blameOn && this.blameError && !md) root.child(div().px(10).py(4).text_size(TEXT.caption).text_color(t.dim).child(this.blameError));
     // The selected line's full blame, like GitLens' current-line annotation.
@@ -277,6 +400,11 @@ export const previewMethods = {
     if (md && !this.mdCode)
       return root.child(div().id("pv-md-body").flex_1().min_h(0).overflow_y_scrollbar().px(28).py(18)
         .child(TextView.markdown(`md-${this.fileKey}`, this.text).w_full().text_size(TEXT.title).selectable(true).scrollable(false)));
+    if (this.editor) {
+      return root.child(div().id("pv-editor").flex_1().min_h(0).font_family(codeFont())
+        .on_key_down((e, cx) => { if (e.key === "s" && e.modifiers?.platform) { cx.stop_propagation(); this.save(cx); } })
+        .child(Editor.new(this.editor).size_full()));
+    }
     root.child(h_flex().flex_1().min_h(0).child(this.codeRows(t)).when(Boolean(this.history), (el) => el.child(this.historyDrawer(t))));
     if (this.truncated) root.child(Message(`Showing the first ${MAX_LINES.toLocaleString()} lines.`));
     return root;

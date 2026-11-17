@@ -8,9 +8,11 @@ A tab bar for Herdr with the package-script runner built in and Files · Changes
 
 Tab pills as in Herdr (agent icon, spinner, status dot, ×), `+`, then `[pm logo] script ▾ │ ▶`, a divider, and Files · Changes · CI · Graph right-aligned (the open panel highlighted). ▾ opens the script list (vx-scripts): project name, the installed package managers (the detected one ✓), a filter, Recent, every script with its command, ⧉ run beside and ▶ run in a new tab.
 
+Each tab also has its icon (program, or the file's Material icon), a faint context (`repo · branch`, or the file's folder) and a 3px repo-colour mark; preview tabs are italic; pinned tabs are icon-only on the left. ⌄ lists every tab. `props { style: "vscode" }` draws VS Code's flush tabs plus Split Right and ⋯; `props { breadcrumbs: true }` is the breadcrumb strip (root › folders › file).
+
 ## How it behaves
 
-Double-click a tab to rename, drag to reorder, right-click for Herdr's tab menu, wheel to switch; each space remembers its open panel. Scripts follow the active repo (vx-workspace) or the focused folder, looking up to 6 folders for `package.json`; the package manager comes from `packageManager`, else the lockfile, else npm, and the list's choice is kept per project. ▶ runs `<pm> run <script>` in a new tab in the package's folder. Graph opens the Commit Graph (vx-graph) of the active repo. `mod.open:vx-scripts` opens the list.
+Double-click a preview tab to keep it (the next file opens a new preview); right-click for Keep Open, Pin / Unpin, Rename…, Close, Close Others / to the Right (click twice), Put Away. `vx-tabs.switch` (⌘E in vx-code) lists tabs in recent order with the previous one preselected. Double-click any other tab to rename, drag to reorder, wheel to switch; each space remembers its open panel. Scripts follow the active repo (vx-workspace) or the focused folder, looking up to 6 folders for `package.json`; the package manager comes from `packageManager`, else the lockfile, else npm, and the list's choice is kept per project. ▶ runs `<pm> run <script>` in a new tab in the package's folder. Graph opens the Commit Graph (vx-graph) of the active repo. `mod.open:vx-scripts` opens the list.
 
 ## Built from
 
