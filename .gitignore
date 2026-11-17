@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+*.d.ts
+jsconfig.json
+.backups/
+mods/*/cache/

@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "name": "herdr-vx",
+  "license": "MIT",
+  "description": "VS Code-style workspace mods for the Herdr desktop app"
+}

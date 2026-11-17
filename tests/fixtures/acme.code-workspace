@@ -1,0 +1,9 @@
+{
+	// a workspace like VS Code writes it, with a comment and a trailing comma
+	"folders": [
+		{ "name": "web", "path": "web" },
+		{ "path": "api" },
+		{ "path": "../shared/infra" },
+	],
+	"settings": { "editor.tabSize": 2 }
+}

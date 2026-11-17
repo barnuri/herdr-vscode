@@ -1,0 +1,7 @@
+{
+  "name": "vx",
+  "owner": { "name": "Dwaipayan Sardar" },
+  "plugins": [
+    { "name": "vx-status", "source": "./claude-plugin/vx-status", "description": "Model, effort and usage for the vx-status bar in Herdr" }
+  ]
+}
