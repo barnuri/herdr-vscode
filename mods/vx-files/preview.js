@@ -215,7 +215,7 @@ export const previewMethods = {
           .child(div().w(4).h_full().flex_none().bg(this.heatColor(t, this.heat?.[i]) ?? t.background))
           .child(div().w(BLAME_W).flex_none().px(8).truncate().text_size(Math.max(10, size - 3)).text_color(sel ? t.muted : t.dim)
             .when(i > 0 && first, (e2) => e2.border_t(1).border_color(t.border))
-            .child(first ? `${NOT_COMMITTED.test(b.sha) ? "You" : b.author} · ${shortAge(b.time)} · ${b.summary}` : "")))
+            .child(first ? (NOT_COMMITTED.test(b.sha) ? "You · Not committed yet" : `${b.author} · ${shortAge(b.time)} · ${b.summary}`) : "")))
         .child(div().w(3).h_full().flex_none().when(Boolean(bar), (el) => el.bg(bar)))
         .child(div().w(size * 3.6).pr(size * 0.9).flex_none().text_right().text_color(t.dim).child(String(n)))
         .child(h_flex().flex_1().min_w(0).whitespace_nowrap()
@@ -266,7 +266,7 @@ export const previewMethods = {
       .child(div().font_family(codeFont()).child(NOT_COMMITTED.test(sb.sha) ? "uncommitted" : sb.sha.slice(0, 8)))
       .child(div().child(NOT_COMMITTED.test(sb.sha) ? "You" : sb.author))
       .child(div().child(sb.time ? new Date(sb.time * 1000).toISOString().slice(0, 10) : ""))
-      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(sb.summary))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(NOT_COMMITTED.test(sb.sha) ? "Not committed yet" : sb.summary))
       .when(!NOT_COMMITTED.test(sb.sha), (el) => el.child(h_flex().id("pv-sb-open").px(6).h(18).items_center().rounded(4).cursor_pointer().text_color(t.accent).hover((s) => s.bg(t.hover))
         .on_click(() => showInViewer("vx-changes", { root: f.root, on: f.on ?? null, path: f.rel, scope: "commit", sha: sb.sha, subject: sb.summary }, f.rel.split("/").pop()))
         .child("open commit diff"))));

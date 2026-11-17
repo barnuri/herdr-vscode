@@ -44,6 +44,10 @@ cp -R mods/vx-* ~/.config/herdr-app/mods/
 herdr-app do layout.switch '{"name":"vx"}'
 ```
 
+**Just one piece?** Each folder at the top of this repo is its own gallery entry with its own
+recipe: `vx-workspace/` (Explorer + preview tab), `vx-changes/` (+ Commit Graph), `vx-ci/`,
+`vx-tabs/` (+ script runner), `vx-status/`, and `vx-icons/` (the icon pack every vx mod needs).
+
 Your own layout stays as it was; `ctrl-shift-l` (⌘⇧L on macOS) switches back. Optional key for CI
 (add to `~/.config/herdr-app/keys.json`): `"cmd-alt-c": "mod.open:vx-ci"`.
 
