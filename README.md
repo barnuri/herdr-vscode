@@ -1,8 +1,9 @@
 # herdr-vx
 
-A VS Code-style workspace for [Herdr Desktop](https://herdr.dev): a multi-root Explorer, GitLens-style
-git, GitLab and GitHub CI, a commit graph and a package-script runner, all following the repo you're
-working in.
+A VS Code-style workspace for [Herdr Desktop](https://herdr.dev): a multi-root Explorer, Search across
+every repo, GitLens-style git, GitLab and GitHub CI, a commit graph, file preview and editing, a
+package-script runner, and a bottom panel with Problems, Terminal and Ports, all following the repo
+you're working in.
 
 ![herdr-vx](preview.png)
 
@@ -23,18 +24,18 @@ Two layouts:
 
 | Mod | Where | What |
 |---|---|---|
-| **vx-workspace** | Files panel | The Explorer: every root of the workspace with its file tree, git colours, ignored folders dimmed and a filter across all roots. Add / remove / rename / drag-reorder roots (written to the `.code-workspace` the way VS Code writes it); Open, Recent, New, Save As and Close workspace. |
+| **vx-workspace** | Explorer | The Explorer: every root of the workspace (Material root-folder icons, branch, status dot) with its file tree, git colours, ignored folders dimmed and a filter across all roots. Add / remove / rename / drag-reorder roots (written to the `.code-workspace` the way VS Code writes it); Open, Recent, New, Save As and Close workspace. |
 | **vx-changes** | Changes panel | Staged / unstaged / conflicts, stage and unstage, commit and amend, plus GitLens-style Commits (expand for files), Branches, Remotes, Stashes, Tags, and Search & Compare. |
 | **vx-ci** | CI panel (⌘⌥C) | GitLab pipelines (via `glab`) and GitHub Actions runs (via `gh`): runs, jobs by stage, retry, cancel, run a pipeline or dispatch a workflow, download artifacts. |
 | **vx-graph** | centre tab | Commit Graph: branch lanes, branch and tag labels, commit details and their diffs. |
 | **vx-files** | centre tab | File preview: syntax colours, Markdown, images, GitLens blame with an age heatmap, file and line history, and **Edit** (Herdr's code editor, ⌘S saves). Also the Timeline side-bar section. |
-| **vx-tabs** | tab bar | Tabs with icons and repo context, italic preview tabs (double-click keeps one), pinned tabs, all-tabs list and ⌘E switcher, the package-script runner; in vx-code also the breadcrumbs. |
+| **vx-tabs** | tab bar | Tabs with icons and repo context, italic preview tabs (double-click keeps one), pinned tabs, a right-click menu (Keep Open, Pin, Rename, Close Others / to the Right, Put Away), drag to reorder, all-tabs list and ⌘E switcher in recent order, a dot for unsaved edits, the package-script runner; in vx-code also the breadcrumbs. |
 | **vx-scripts** | popup | Every `package.json` script (workspace packages too), run in a new tab or beside you, with npm / pnpm / yarn / bun detected and switchable. Also the NPM Scripts side-bar section. |
-| **vx-status** | bottom bar | Repo, branch, ↑↓ with fetch / pull / push, changes; with the Claude Code plugin, the model and context / usage meters. |
+| **vx-status** | bottom bar | Repo, branch, ↑↓ with fetch / pull / push, changes, conflicts, stashes; in vx-code also `✕ errors ⚠ warnings` (opens Problems), the listening-port count (opens Ports) and the repo's last pipeline; with the Claude Code plugin, the model and context / usage meters. |
 | **vx-search** | side bar (vx-code) | Search across every repo of the workspace (`git grep`): Match Case, Whole Word, Regex, files to include; a match opens the file at its line. |
 | **vx-panel** | bottom panel (vx-code) | Problems (conflicts, failing pipelines, branches behind, and **Run checks**: the repo's typecheck / lint scripts as file:line rows), Terminal (shells that never become tabs), Ports (listening programs: open, or stop after asking). |
 | **vx-activity** | activity bar (vx-code) | Explorer, Search, Source Control, CI, Spaces, Agents with badges; Graph and Settings. Also the side bar's title. |
-| **vx-titlebar** | title bar (vx-code) | Workspace name, ← → through visited tabs, the command center (Go to File, `>` for commands), layout toggles. |
+| **vx-titlebar** | title bar (vx-code) | Workspace name, ← → through visited tabs, the command center (Go to File across every repo, recently opened files, `>` for Herdr's command palette), layout toggles. |
 | **vx-icons** | assets | [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme) icons (MIT) and the UI icons. |
 
 Changes, CI and Graph each have a `repo ▾` switcher in their header.
@@ -43,33 +44,64 @@ Changes, CI and Graph each have a `repo ▾` switcher in their header.
 
 ## Install
 
+### With your agent
+
 Paste this into your agent inside Herdr:
 
 ```text
-Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/sardar099/herdr-vx
+Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/sardar099/herdr-vx/tree/main/vx-code
+Also copy its themes/ folder into ~/.config/herdr-app/themes/.
 ```
 
-For the VS Code layout: `... then add this layout: https://github.com/sardar099/herdr-vx/tree/main/vx-code`.
+The agent copies the layout and its mods, merges its `keys.json` (asking before it replaces a key you
+already use), checks every mod and switches to it. For the other layout (Herdr's window with the vx
+panels on the right) use `https://github.com/sardar099/herdr-vx` instead.
 
-Or by hand, from a clone:
+### By hand
+
+Needs Node 18+ and Herdr's `herdr-app` command (both only for installing).
 
 ```sh
-./sync.sh --layout vx-code      # every mod, the themes, and the layout (or --layout vx)
+git clone https://github.com/sardar099/herdr-vx
+cd herdr-vx
+./sync.sh --layout vx-code           # every mod (checked first), the One Monokai theme, the layout
+node tools/add-keys.mjs vx-code      # the keys below; keys you already set win
 herdr-app do layout.switch '{"name":"vx-code"}'
 ```
 
-vx-code's keys are in [vx-code/keys.json](vx-code/keys.json) (merge its `layout:vx-code` section
-into `~/.config/herdr-app/keys.json`): ⌘P Go to File, ⌘⇧F Search, ⌘⇧E Explorer, ⌘⇧G Source
-Control, ⌘J or `` ctrl-` `` the panel, ⌘E switch tab, ⌘\ split, ⌘S save the edited file. One Monokai is
-in the theme picker once `themes/one-monokai.json` is in `~/.config/herdr-app/themes/`.
+`sync.sh` installs into `~/.config/herdr-app` (or `$HERDR_APP_HOME`). For the other layout:
+`./sync.sh --layout vx`. Your own layout stays as it was: `ctrl-shift-l` (⌘⇧L on macOS) switches
+between layouts.
 
 **Just one piece?** Each folder at the top of this repo is its own gallery entry with its own
 recipe: `vx-workspace/` (Explorer + preview tab), `vx-changes/` (+ Commit Graph), `vx-ci/`,
 `vx-tabs/` (+ script runner), `vx-status/`, and `vx-icons/` (the icon pack every vx mod needs).
 `vx-code/` is the VS Code layout with every mod it uses.
 
-Your own layout stays as it was; `ctrl-shift-l` (⌘⇧L on macOS) switches back. Optional key for CI
-(add to `~/.config/herdr-app/keys.json`): `"cmd-alt-c": "mod.open:vx-ci"`.
+### Theme
+
+One Monokai is in Settings › Look once `themes/one-monokai.json` is in `~/.config/herdr-app/themes/`
+(`sync.sh` puts it there), or set `"theme": "one-monokai"` in `settings.json`. vx-code works with any
+theme, light ones too.
+
+### Keys (vx-code)
+
+| Key | Does |
+|---|---|
+| ⌘P | Go to File (type `>` for Herdr's command palette) |
+| ⌘⇧F | Search |
+| ⌘⇧E / ⌘⇧G | Explorer / Source Control |
+| ⌘J or `` ctrl-` `` | Show or hide the bottom panel |
+| ⌘E | Switch tab (recent first) |
+| ⌘\ | Split right |
+| ⌘S | Save the file you're editing |
+| ⌘B | Show or hide the side bar (Herdr's) |
+
+They live in the `layout:vx-code` section of `~/.config/herdr-app/keys.json`, so other layouts keep
+Herdr's keys (⌘P stays Herdr's picker there). Optional, any layout: `"cmd-alt-c": "mod.open:vx-ci"`
+toggles CI.
+
+### Claude Code meters
 
 The Claude Code plugin that fills the status bar's model and usage meters:
 
@@ -78,10 +110,18 @@ claude plugin marketplace add sardar099/herdr-vx
 claude plugin install vx-status@vx
 ```
 
+### Update and remove
+
+Update: `git pull && ./sync.sh` (unchanged mods aren't touched; Herdr reloads the rest). Remove:
+switch to another layout, then delete `layouts/vx-code.json` and `.svg`, the `mods/vx-*` folders,
+`themes/one-monokai.json` and the `layout:vx-code` section of `keys.json` in `~/.config/herdr-app/`.
+
 ## Needs
 
 - **git**. **glab** (logged in) for GitLab CI, **gh** (logged in) for GitHub CI. SSH host aliases in
   `~/.ssh/config` (e.g. `Host work-github`) are resolved to their real host.
+- Run checks uses your repo's own `typecheck` / `lint` scripts (and its package manager); Ports uses
+  `lsof` (built into macOS).
 - macOS is tested. Folder listings use `sh`, so Linux should work; Windows isn't supported.
 
 ## Safety
@@ -106,6 +146,7 @@ pure and tested under node.
 ```sh
 npm test       # node --test tests/
 ./sync.sh      # build, herdr-app check, install mods + themes + our installed layouts (atomic; unchanged skipped)
+node tools/add-keys.mjs vx-code   # merge a layout card's keys
 ```
 
 How it's put together, for an agent rebuilding it: [RECIPE.md](RECIPE.md).
