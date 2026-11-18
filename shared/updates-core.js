@@ -1,4 +1,4 @@
-// Auto-update rules shared by vx-updates (which acts) and vx-titlebar (which shows the versions).
+// Auto-update rules shared by herdr-vscode-updates (which acts) and herdr-vscode-titlebar (which shows the versions).
 // Ported from herdr-auto-update (lib/config.js, lib/semver.js, decideUpdate in lib/updater.js),
 // with two app keys: autoUpdateApp and autoUpdateCore. Pure.
 export const UPDATE_CONFIG_FILE = ".config/herdr/plugins/config/barnuri.auto-update/config.json";

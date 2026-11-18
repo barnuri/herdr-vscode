@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizeConfig, addManualProject, pickCache, globToRegExp, isExcluded, projectDirOf, discovered, mergeProjects, fuzzyScore, fuzzyFilter, spaceFor, busyPaths,
-} from "../mods/vx-projects/projects-core.js";
+} from "../mods/herdr-vscode-projects/projects-core.js";
 
 const HOME = "/h";
 
@@ -76,7 +76,7 @@ test("spaceFor and busyPaths find open projects", () => {
 
 // Mirrors herdr-project-manager tests/discover.test.js "isExcluded".
 test("isExcluded matches the plugin's vectors", async () => {
-  const { isExcluded: excluded } = await import("../mods/vx-projects/projects-core.js");
+  const { isExcluded: excluded } = await import("../mods/herdr-vscode-projects/projects-core.js");
   assert.equal(excluded("/opt/repos/widget", undefined, HOME), false);
   assert.equal(excluded("/opt/repos/widget", [], HOME), false);
   assert.equal(excluded("/opt/repos/widget", "not-an-array", HOME), false);
@@ -96,7 +96,7 @@ test("isExcluded matches the plugin's vectors", async () => {
 });
 
 test("discoveryPlan: .git globs become a pruned find from the literal root", async () => {
-  const { discoveryPlan, findArgs, findMatches } = await import("../mods/vx-projects/projects-core.js");
+  const { discoveryPlan, findArgs, findMatches } = await import("../mods/herdr-vscode-projects/projects-core.js");
   const plan = discoveryPlan(["~/s/**/.git", "~/x/*", " "], ["~/s/skip", "**/node_modules", "rel/path", "**/out/**", "**/a*b/**"], HOME);
   assert.deepEqual(plan.finds, [{ glob: "/h/s/**/.git", root: "/h/s" }]);
   assert.deepEqual(plan.shell, ["/h/x/*"]);
@@ -109,15 +109,15 @@ test("discoveryPlan: .git globs become a pruned find from the literal root", asy
 });
 
 test("sortProjects and removeManualProject", async () => {
-  const { sortProjects, removeManualProject } = await import("../mods/vx-projects/projects-core.js");
+  const { sortProjects, removeManualProject } = await import("../mods/herdr-vscode-projects/projects-core.js");
   assert.deepEqual(sortProjects([{ name: "beta" }, { name: "CSharp" }, { name: "Alpha" }, { name: "alpha2" }]).map((project) => project.name), ["Alpha", "alpha2", "beta", "CSharp"]);
   const raw = { globs: ["g"], autoOpen: false, projects: [{ name: "a", path: "/a" }, { name: "b", path: "/b/" }] };
   assert.deepEqual(removeManualProject(raw, "/b"), { globs: ["g"], autoOpen: false, projects: [{ name: "a", path: "/a" }] });
 });
 
 test("repoWebUrl builds the repository page from origin, ssh aliases resolved", async () => {
-  const { parseRemote } = await import("../mods/vx-projects/git-core.js");
-  const { repoWebUrl, sshHostname } = await import("../mods/vx-projects/scm-core.js");
+  const { parseRemote } = await import("../mods/herdr-vscode-projects/git-core.js");
+  const { repoWebUrl, sshHostname } = await import("../mods/herdr-vscode-projects/scm-core.js");
   assert.equal(repoWebUrl(parseRemote("git@github.com:barnuri/herdr-vscode.git")), "https://github.com/barnuri/herdr-vscode");
   assert.equal(repoWebUrl(parseRemote("https://gitlab.example.com/group/sub/app.git")), "https://gitlab.example.com/group/sub/app");
   assert.equal(repoWebUrl(parseRemote("ssh://git@github.com:22/o/r")), "https://github.com/o/r");
@@ -130,7 +130,7 @@ test("repoWebUrl builds the repository page from origin, ssh aliases resolved", 
 });
 
 test("parseConfigText: missing is empty, broken JSON is an error", async () => {
-  const { parseConfigText } = await import("../mods/vx-projects/projects-core.js");
+  const { parseConfigText } = await import("../mods/herdr-vscode-projects/projects-core.js");
   assert.deepEqual(parseConfigText(null), { raw: null, error: null });
   assert.deepEqual(parseConfigText('{"globs":[]}'), { raw: { globs: [] }, error: null });
   assert.ok(parseConfigText('{"globs": ["a" "b"]}').error);

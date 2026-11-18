@@ -1,13 +1,17 @@
 #!/bin/sh
-# Installs the vx mods into the Herdr app, which hot-reloads them.
+# Installs the herdr-vscode mods into the Herdr app, which hot-reloads them.
 #
 #   ./sync.sh                     every mod in mods/, the themes, and our layouts you have
-#   ./sync.sh vx-status           just these mods (themes and layouts too)
-#   ./sync.sh --layout vx-code    also add that layout (layouts/vx-code.json + .svg)
+#   ./sync.sh herdr-vscode-status           just these mods (themes and layouts too)
+#   ./sync.sh --layout herdr-vscode    also add that layout (layouts/herdr-vscode.json + .svg)
+#
+# An install from before the rename (mods/vx-*, layouts/vx-code) is migrated: the new layout is
+# installed with the old one's clicks and keys, shown if the old one was, and then the old mods
+# and layout go to the Trash.
 #
 # Themes (themes/*.json) are copied when they differ. A layout is copied when it's new (asked
 # for with --layout) or when the repo's file changed since the last sync: Herdr keeps clicks
-# (sizes, hidden) apart, but vx-panel edits the installed layout itself (layout.set), so an
+# (sizes, hidden) apart, but herdr-vscode-panel edits the installed layout itself (layout.set), so an
 # unchanged source never overwrites it.
 #
 # Each mod is put together in a hidden staging folder (Herdr doesn't watch hidden folders) with
@@ -18,11 +22,22 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 home_dir=${HERDR_APP_HOME:-"$HOME/.config/herdr-app"}
-stage="$home_dir/mods/.vx-stage"
+stage="$home_dir/mods/.herdr-vscode-stage"
 [ -d "$home_dir/mods" ] || { echo "no Herdr app home at $home_dir" >&2; exit 1; }
 
 add_layouts=""
 names=""
+old_layout=vx-code
+new_layout=herdr-vscode
+migrate=0
+if [ -f "$home_dir/layouts/$old_layout.json" ] && [ ! -f "$home_dir/layouts/$new_layout.json" ]; then
+  migrate=1
+  add_layouts=" $new_layout"
+  # Clicks (sizes, hidden) are kept per layout name: start the new layout with the old one's.
+  if [ -f "$home_dir/layouts/.state/$old_layout.json" ] && [ ! -f "$home_dir/layouts/.state/$new_layout.json" ]; then
+    cp "$home_dir/layouts/.state/$old_layout.json" "$home_dir/layouts/.state/$new_layout.json"
+  fi
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --layout) add_layouts="$add_layouts $2"; shift 2 ;;
@@ -30,7 +45,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 node "$here/tools/build.mjs"
-[ -n "$names" ] || names=$(cd "$here/mods" && ls -d vx-* | tr '\n' ' ')
+[ -n "$names" ] || names=$(cd "$here/mods" && ls -d herdr-vscode-* | tr '\n' ' ')
 rm -rf "$stage" && mkdir -p "$stage"
 trap 'rm -rf "$stage"' EXIT
 status=0
@@ -74,7 +89,7 @@ for f in "$here"/themes/*.json; do
 done
 
 # Layouts: ours that are installed (or asked for), when the source changed since last sync.
-seen="$home_dir/layouts/.vx-synced"
+seen="$home_dir/layouts/.herdr-vscode-synced"
 mkdir -p "$seen"
 for f in "$here"/layouts/*.json; do
   n=$(basename "$f" .json)
@@ -87,4 +102,45 @@ for f in "$here"/layouts/*.json; do
   cp "$f" "$home_dir/layouts/.$n.json.tmp" && mv "$home_dir/layouts/.$n.json.tmp" "$installed" && cp "$f" "$seen/$n.json"
   echo "synced layout $n"
 done
+
+if [ $migrate = 1 ] && [ $status = 0 ]; then
+  # keys.json: the old layout's section becomes the new one's, its vx-* commands renamed.
+  HOME_DIR="$home_dir" node -e '
+    const fs = require("fs");
+    const file = `${process.env.HOME_DIR}/keys.json`;
+    let keys;
+    try { keys = JSON.parse(fs.readFileSync(file, "utf8")); } catch { process.exit(0); }
+    const old = keys["layout:vx-code"];
+    if (!old || keys["layout:herdr-vscode"]) process.exit(0);
+    const renamed = Object.fromEntries(Object.entries(old).map(([key, command]) => [key, String(command).replace(/^vx-/, "herdr-vscode-")]));
+    keys["layout:herdr-vscode"] = renamed;
+    delete keys["layout:vx-code"];
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(keys, null, 2) + "\n");
+    fs.renameSync(`${file}.tmp`, file);'
+  node "$here/tools/add-keys.mjs" "$new_layout" >/dev/null
+  shown=$(herdr-app status 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).layout??"")}catch{}})' || true)
+  if [ "$shown" = "$old_layout" ]; then
+    herdr-app do layout.switch --name "$new_layout" >/dev/null && echo "shown  layout $new_layout"
+  fi
+  # An open empty editor ("Welcome" tab without terminals) runs the old mod: replace it first.
+  herdr-app ls 2>/dev/null | node -e '
+    let s = "";
+    process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      try {
+        for (const space of JSON.parse(s).spaces ?? []) {
+          for (const tab of space.tabs ?? []) {
+            if (tab.name === "Welcome" && !(tab.terminals ?? []).length) console.log(`${space.id} ${tab.id}`);
+          }
+        }
+      } catch {}
+    });' | while read -r space tab; do
+    herdr-app do tab.new "{\"space\":\"$space\",\"name\":\"Welcome\",\"mod\":\"herdr-vscode-empty\"}" >/dev/null &&
+      herdr-app do tab.close "{\"id\":\"$tab\",\"confirmed\":true}" >/dev/null && echo "moved  empty editor $tab"
+  done
+  for old in "$home_dir"/mods/vx-* "$home_dir/layouts/$old_layout.json" "$home_dir/layouts/$old_layout.svg" \
+             "$home_dir/layouts/.state/$old_layout.json" "$home_dir/layouts/.vx-synced"; do
+    [ -e "$old" ] || continue
+    trash "$old" && echo "trash  ${old#"$home_dir"/}"
+  done
+fi
 exit $status

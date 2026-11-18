@@ -1,6 +1,6 @@
 import { appHome, readTextFile } from "herdr";
 
-const ICON_TABLE = "mods/vx-icons/icons.json";
+const ICON_TABLE = "mods/herdr-vscode-icons/icons.json";
 
 export function loadIcons(view, cx) {
   view.icons ??= null;

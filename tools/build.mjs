@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A Herdr mod can only import files from its own folder and installs by copying that folder,
-// so every mods/vx-*/ carries a copy of shared/*.js. Edit shared/, then run this.
+// so every mods/herdr-vscode-*/ carries a copy of shared/*.js. Edit shared/, then run this.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ const COPY_EXCLUDE = /(\/cache|\.DS_Store|jsconfig\.json|\.d\.ts)$/;
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sharedFiles = fs.readdirSync(path.join(repoRoot, "shared")).filter((file) => file.endsWith(".js"));
-const modNames = fs.readdirSync(path.join(repoRoot, "mods")).filter((mod) => mod.startsWith("vx-"));
+const modNames = fs.readdirSync(path.join(repoRoot, "mods")).filter((mod) => mod.startsWith("herdr-vscode-"));
 
 const modFile = (mod, file) => path.join(repoRoot, "mods", mod, file);
 const readText = (file) => fs.readFileSync(file, "utf8");

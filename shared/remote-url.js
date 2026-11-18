@@ -1,5 +1,5 @@
 // The web page of a repo's origin, with an SSH alias (Host in ~/.ssh/config) resolved the way
-// vx-changes does. The rules are in git-core.js (parseRemote) and scm-core.js (repoWebUrl).
+// herdr-vscode-changes does. The rules are in git-core.js (parseRemote) and scm-core.js (repoWebUrl).
 import { exec } from "herdr";
 import { git } from "./ws.js";
 import { parseRemote, providerOf } from "./git-core.js";

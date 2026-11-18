@@ -1,5 +1,5 @@
-// The bottom panel's data: listening ports from lsof, workspace problems from what vx-workspace /
-// vx-ci publish, and problems parsed from a repo's lint / typecheck output.
+// The bottom panel's data: listening ports from lsof, workspace problems from what herdr-vscode-workspace /
+// herdr-vscode-ci publish, and problems parsed from a repo's lint / typecheck output.
 
 const TYPE_CHECK_SCRIPTS = ["typecheck", "type-check", "check-types", "types", "tsc"];
 const LINT_SCRIPTS = ["lint:check", "lint"];
@@ -69,7 +69,7 @@ function rootProblems(root, status, lastRun) {
   return problems;
 }
 
-// roots [{name, path}], git = shared("vx.git"), ci = shared("vx.ci.summary") -> problems.
+// roots [{name, path}], git = shared("herdr-vscode.git"), ci = shared("herdr-vscode.ci.summary") -> problems.
 export function workspaceProblems(roots, git = {}, ci = {}) {
   return (roots ?? []).flatMap((root) => rootProblems(root, git?.[root.path], ci?.[root.path]));
 }
@@ -138,7 +138,7 @@ export function parseCheckOutput(text, { root, dir = root } = {}) {
   return problems;
 }
 
-// Errors and warnings across workspace problems and check results (vx.checks).
+// Errors and warnings across workspace problems and check results (herdr-vscode.checks).
 export function countProblems(list, checks = {}) {
   const levels = [
     ...(list ?? []).map((problem) => problem.level),

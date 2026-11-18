@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Usage: `node tools/add-keys.mjs vx-code`. Keys already set in a section win.
+// Usage: `node tools/add-keys.mjs herdr-vscode`. Keys already set in a section win.
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
-const DEFAULT_CARD = "vx-code";
+const DEFAULT_CARD = "herdr-vscode";
 
 const card = process.argv[2] ?? DEFAULT_CARD;
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");

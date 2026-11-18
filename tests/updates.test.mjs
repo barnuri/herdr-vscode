@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   readUpdateConfig, withUpdateConfig, updateKind, decideUpdate, appPlan, corePlan, checkDue, canAct, versionsLabel, waitingNotes, UPDATE_DEFAULTS,
-} from "../mods/vx-updates/updates-core.js";
+} from "../mods/herdr-vscode-updates/updates-core.js";
 
 test("readUpdateConfig: defaults, booleans only, interval at least 15, broken JSON reported", () => {
   assert.deepEqual(readUpdateConfig("{}").config, UPDATE_DEFAULTS);

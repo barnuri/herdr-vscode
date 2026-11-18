@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { groupRunning, rollupStatus, sortFolders, planClose, buildTree, displayTitle } from "../mods/vx-running/running-core.js";
-import { pickPrefs, DEFAULT_PREFS } from "../mods/vx-running/running-core.js";
+import { groupRunning, rollupStatus, sortFolders, planClose, buildTree, displayTitle } from "../mods/herdr-vscode-running/running-core.js";
+import { pickPrefs, DEFAULT_PREFS } from "../mods/herdr-vscode-running/running-core.js";
 
 const spaces = [{ id: "s1", name: "work", tabs: [{ id: "t1", name: "fix" }, { id: "t2", name: "" }] }];
 const pane = (overrides) => ({ pane: "p", terminal: "t9", tab: "t1", cwd: "/r/a", title: "", status: null, program: { name: "zsh" }, focused: false, branch: null, ...overrides });
@@ -35,7 +35,7 @@ test("groupRunning groups panes by repo root, else cwd", () => {
 test("groupRunning skips mod panes and keeps opened order; sortFolders reorders", () => {
   const folders = groupRunning({
     panes: [
-      pane({ pane: "m1", terminal: null, cwd: null, mod: "vx-files" }),
+      pane({ pane: "m1", terminal: null, cwd: null, mod: "herdr-vscode-files" }),
       pane({ pane: "p1", cwd: "/a", status: "idle" }),
       pane({ pane: "p2", cwd: "/c", status: "blocked" }),
       pane({ pane: "p3", cwd: "/b" }),
@@ -90,8 +90,8 @@ test("pickPrefs keeps typed keys and fills defaults", () => {
 });
 
 test("formatGitLine counts like the minimal-git prompt", async () => {
-  const { gitCounts, formatGitLine } = await import("../mods/vx-running/running-core.js");
-  const { parseStatus } = await import("../mods/vx-running/git-core.js");
+  const { gitCounts, formatGitLine } = await import("../mods/herdr-vscode-running/running-core.js");
+  const { parseStatus } = await import("../mods/herdr-vscode-running/git-core.js");
   const clean = parseStatus("## main...origin/main\0");
   assert.equal(formatGitLine(gitCounts(clean)), "main =");
   const dirty = parseStatus(["## dev...origin/dev [ahead 2, behind 1]", "A  new.js", "?? x.txt", " M a.js", "MM b.js", " D c.js", "UU d.js", ""].join("\0"));
@@ -100,7 +100,7 @@ test("formatGitLine counts like the minimal-git prompt", async () => {
 });
 
 test("orch: an idle agent with fresh orch activity or live child jobs shows as orch", async () => {
-  const { parseActivity, parseOrchJobs, orchLookup } = await import("../mods/vx-running/running-core.js");
+  const { parseActivity, parseOrchJobs, orchLookup } = await import("../mods/herdr-vscode-running/running-core.js");
   const now = 1_000_000_000;
   const activity = parseActivity([
     JSON.stringify({ active: true, updated_at: now / 1000 - 10, summary: "2 of 5 nodes", pane: "p1" }),

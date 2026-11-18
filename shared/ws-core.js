@@ -63,7 +63,7 @@ export function rootFor(cwd, roots) {
  * Which folder a mod shows, and why.
  * focus: { cwd, branch, on } for the focused terminal (cwd null for a mod pane or none).
  * active: { root, on, name, by } -- by "pick" when you chose it (a panel's repo switcher, a
- * click in Files); vx-workspace turns a pick into "click" as soon as focus moves elsewhere.
+ * click in Files); herdr-vscode-workspace turns a pick into "click" as soon as focus moves elsewhere.
  * Rules, first that applies:
  *   0. a repo you just picked                           -> that repo      ("picked")
  *   1. the focused terminal is inside a workspace root  -> that root      ("root")

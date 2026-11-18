@@ -8,12 +8,12 @@ import { colorSlot } from "./colors-core.js";
 import { FileIcon, Icon } from "./ui.js";
 import { isUntitledName } from "./untitled-core.js";
 
-const GRAPH_MOD = "vx-graph";
-const CHANGES_MOD = "vx-changes";
-const VIEWERS = new Set(["vx-files", CHANGES_MOD, GRAPH_MOD]);
+const GRAPH_MOD = "herdr-vscode-graph";
+const CHANGES_MOD = "herdr-vscode-changes";
+const VIEWERS = new Set(["herdr-vscode-files", CHANGES_MOD, GRAPH_MOD]);
 const DEFAULT_ICON_SIZE = 14;
 // An Untitled-N buffer in this mod describes itself, not the space's file preview.
-const UNTITLED_MOD = "vx-files";
+const UNTITLED_MOD = "herdr-vscode-files";
 
 // A status glyph or "[ ! ]" prefix an agent puts in its title, dropped.
 const cleanTitle = (title) => (title ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();

@@ -1,42 +1,43 @@
 export const CARDS = {
-  "vx-workspace": ["vx-workspace", "vx-files"],
-  "vx-changes": ["vx-changes", "vx-graph"],
-  "vx-ci": ["vx-ci"],
-  "vx-tabs": ["vx-tabs", "vx-scripts"],
-  "vx-status": ["vx-status"],
-  "vx-icons": ["vx-icons"],
-  "vx-running": ["vx-running"],
-  "vx-projects": ["vx-projects"],
+  "herdr-vscode-workspace": ["herdr-vscode-workspace", "herdr-vscode-files"],
+  "herdr-vscode-changes": ["herdr-vscode-changes", "herdr-vscode-graph"],
+  "herdr-vscode-ci": ["herdr-vscode-ci"],
+  "herdr-vscode-tabs": ["herdr-vscode-tabs", "herdr-vscode-scripts"],
+  "herdr-vscode-status": ["herdr-vscode-status"],
+  "herdr-vscode-icons": ["herdr-vscode-icons"],
+  "herdr-vscode-running": ["herdr-vscode-running"],
+  "herdr-vscode-projects": ["herdr-vscode-projects"],
 };
 
 export const LAYOUT_CARDS = {
-  "vx-code": {
-    layout: "vx-code",
-    // These open at runtime (graph tabs, the vx-updates extension), so the layout does not name them.
-    extra: ["vx-graph", "vx-updates"],
+  "herdr-vscode": {
+    layout: "herdr-vscode",
+    // These open at runtime (graph tabs, the herdr-vscode-updates extension), so the layout does not name them.
+    extra: ["herdr-vscode-graph", "herdr-vscode-updates"],
     themes: ["one-monokai"],
     keys: {
-      "layout:vx-code": {
-        "cmd-p": "vx-titlebar.goto",
-        "cmd-shift-o": "vx-titlebar.symbols",
-        "cmd-shift-f": "vx-activity.search",
-        "cmd-shift-e": "vx-activity.explorer",
-        "cmd-shift-g": "vx-activity.scm",
-        "cmd-shift-r": "vx-activity.running",
-        "cmd-j": "vx-activity.panel",
-        "ctrl-`": "vx-activity.panel",
-        "cmd-e": "vx-tabs.switch",
+      "layout:herdr-vscode": {
+        "cmd-p": "herdr-vscode-titlebar.goto",
+        "cmd-shift-o": "herdr-vscode-titlebar.symbols",
+        "cmd-shift-f": "herdr-vscode-activity.search",
+        "cmd-shift-e": "herdr-vscode-activity.explorer",
+        "cmd-shift-g": "herdr-vscode-activity.scm",
+        "cmd-shift-r": "herdr-vscode-activity.running",
+        "cmd-j": "herdr-vscode-activity.panel",
+        "ctrl-`": "herdr-vscode-activity.panel",
+        "cmd-e": "herdr-vscode-tabs.switch",
         "cmd-\\": "pane.split:right",
-        "cmd-s": "vx-files.save",
+        "cmd-s": "herdr-vscode-files.save",
+        "cmd-w": "herdr-vscode-tabs.close",
       },
     },
   },
 };
 
-const VX_PREFIX = "vx-";
-const ICON_MOD = "vx-icons";
+const VX_PREFIX = "herdr-vscode-";
+const ICON_MOD = "herdr-vscode-icons";
 
-// Every other vx mod draws its icons from vx-icons, so a layout always needs it.
+// Every other herdr-vscode mod draws its icons from herdr-vscode-icons, so a layout always needs it.
 export function layoutMods(tree, extra = []) {
   const mods = new Set([ICON_MOD, ...extra]);
   const walk = (node) => {

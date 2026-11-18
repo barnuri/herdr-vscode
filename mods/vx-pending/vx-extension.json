@@ -1,8 +1,0 @@
-{
-  "id": "pending",
-  "name": "Pending Repos",
-  "title": "Pending Repos: uncommitted or unpushed work under ~/code",
-  "icon": "mods/vx-pending/icon.svg",
-  "view": { "mod": "vx-pending" },
-  "badge": "vx.pending.badge"
-}

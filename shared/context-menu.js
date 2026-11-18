@@ -73,7 +73,7 @@ class ContextMenu {
 
   render() {
     const t = theme();
-    return v_flex().id("vx-context-menu").size_full().p(4).bg(t.popover ?? t.surface).text_color(t.foreground)
+    return v_flex().id("herdr-vscode-context-menu").size_full().p(4).bg(t.popover ?? t.surface).text_color(t.foreground)
       .track_focus(this.focus)
       .on_key_down((event, cx) => this.onKey(event, cx))
       .child(v_flex().px(8).pt(4).pb(6)

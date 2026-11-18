@@ -11,8 +11,8 @@ const OPEN_PX = 220;
 const OPEN_SLACK_PX = 2;
 const CHEVRON_SIZE = 14;
 const TITLE_TEXT_SIZE = 11;
-// vx-activity opens the menu sized to its real rows (built-in views, extensions, sections).
-const VISIBILITY_MENU_COMMAND = "vx-activity.visibility";
+// herdr-vscode-activity opens the menu sized to its real rows (built-in views, extensions, sections).
+const VISIBILITY_MENU_COMMAND = "herdr-vscode-activity.visibility";
 
 const openSizeKey = (block) => `open:${block}`;
 

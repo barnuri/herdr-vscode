@@ -1,7 +1,7 @@
 // vscode-icons picks by VS Code's rules: names match case-insensitively; a path rule beats a name,
 // a name beats an extension, the longest extension wins.
 
-export const ICON_DIR = "mods/vx-icons/icons";
+export const ICON_DIR = "mods/herdr-vscode-icons/icons";
 
 const PATH_RULE_DEPTH = 3;
 const LUMA_WEIGHTS = [0.299, 0.587, 0.114];

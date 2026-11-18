@@ -77,5 +77,5 @@ test("actionToRun names the argument from the command list", () => {
   assert.deepEqual(actionToRun("pane.split:right", list), { name: "pane.split", args: { direction: "right" } });
   assert.equal(actionToRun("pane.split", list), null);
   assert.deepEqual(actionToRun("tab.new", list), { name: "tab.new", args: undefined });
-  assert.deepEqual(actionToRun("vx-activity.search", list), { name: "vx-activity.search", args: undefined });
+  assert.deepEqual(actionToRun("herdr-vscode-activity.search", list), { name: "herdr-vscode-activity.search", args: undefined });
 });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseManifest, mergeViews, badgeText, stackChild, withStackChild } from "../mods/vx-activity/extensions-core.js";
+import { parseManifest, mergeViews, badgeText, stackChild, withStackChild } from "../mods/herdr-vscode-activity/extensions-core.js";
 
 test("parseManifest fills defaults and rejects bad manifests", () => {
   const { manifest } = parseManifest(JSON.stringify({ id: "hello", view: { props: { a: 1 } } }), "hello-ext");
@@ -8,7 +8,7 @@ test("parseManifest fills defaults and rejects bad manifests", () => {
     id: "hello", name: "hello", title: "hello", icon: "mods/hello-ext/icon.svg",
     view: { mod: "hello-ext", props: { a: 1 } }, badge: null, folder: "hello-ext",
   });
-  assert.match(parseManifest("{bad", "x").error, /x\/vx-extension.json/);
+  assert.match(parseManifest("{bad", "x").error, /x\/herdr-vscode-extension.json/);
   assert.match(parseManifest("[]", "x").error, /not an object/);
   assert.match(parseManifest('{"id":"no spaces"}', "x").error, /"id"/);
   assert.match(parseManifest('{"id":"ok","view":{"mod":"../evil"}}', "x").error, /view.mod/);

@@ -1,17 +1,17 @@
-// The auto-update worker. vx-titlebar (always on screen in vx-code) and the vx-updates view both
+// The auto-update worker. herdr-vscode-titlebar (always on screen in herdr-vscode) and the herdr-vscode-updates view both
 // start one; the shared lease lets only one of them check and install (rules in updates-core.js).
-import { checking, updates, agents, run, shared, setShared, home, exec, readTextFile, writeTextFile, notify } from "herdr";
-import { logInfo } from "./log.js";
+import { checking, updates, agents, run, shared, setShared, home, exec, readTextFile, writeTextFile } from "herdr";
+import { logInfo, toast } from "./log.js";
 import { UPDATE_CONFIG_FILE, readUpdateConfig, withUpdateConfig, appPlan, corePlan, checkDue, canAct } from "./updates-core.js";
 
 class UpdatesWorker {
   static TICK_MS = 60000;
   static FIRST_TICK_MS = 5000;
-  static LEASE_KEY = "vx.updates.lease";
+  static LEASE_KEY = "herdr-vscode.updates.lease";
   static LEASE_TTL_MS = 180000;
-  static ATTEMPT_KEY = "vx.updates.lastAttempt";
-  static STATUS_KEY = "vx.updates.status";
-  static BADGE_KEY = "vx.updates.badge";
+  static ATTEMPT_KEY = "herdr-vscode.updates.lastAttempt";
+  static STATUS_KEY = "herdr-vscode.updates.status";
+  static BADGE_KEY = "herdr-vscode.updates.badge";
   // While this file exists in the app home, nothing is installed or restarted, only reported.
 
   static configPath() {
@@ -27,7 +27,7 @@ class UpdatesWorker {
   static async toggle(key) {
     const current = await UpdatesWorker.readConfigFile();
     if (current.error) {
-      notify({ title: "config.json is not valid JSON", body: current.error, level: "error" });
+      toast("herdr-vscode-updates", { title: "config.json is not valid JSON", body: current.error, level: "error" });
       return;
     }
     const next = withUpdateConfig(current.raw, { [key]: !current.config[key] });
@@ -35,7 +35,7 @@ class UpdatesWorker {
       await exec("mkdir", ["-p", UpdatesWorker.configPath().replace(/\/[^/]*$/, "")]);
       await writeTextFile(UpdatesWorker.configPath(), `${JSON.stringify(next, null, 2)}\n`, current.text);
     } catch (error) {
-      notify({ title: "Couldn't save config.json", body: String(error?.message ?? error), level: "error" });
+      toast("herdr-vscode-updates", { title: "Couldn't save config.json", body: String(error?.message ?? error), level: "error" });
     }
   }
 
@@ -62,7 +62,7 @@ class UpdatesWorker {
       UpdatesWorker.report(`Dry run: would run ${command} for ${what}.`, true);
       return;
     }
-    logInfo("vx-updates", `${command} for ${what}`);
+    logInfo("herdr-vscode-updates", `${command} for ${what}`);
     run(command);
   }
 

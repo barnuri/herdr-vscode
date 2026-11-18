@@ -1,6 +1,8 @@
-// Activity-bar extensions: any mod folder may ship vx-extension.json (see docs/extensions.md).
+// Activity-bar extensions: any mod folder may ship herdr-vscode-extension.json (see docs/extensions.md).
 // Pure: manifest checks, the merge with the built-in views, badges, and the layout edit.
-export const MANIFEST_FILE = "vx-extension.json";
+export const MANIFEST_FILE = "herdr-vscode-extension.json";
+// The name extensions used before the rename; still read when the new one is missing.
+export const LEGACY_MANIFEST_FILE = "vx-extension.json";
 export const VIEW_PREFIX = "ext-";
 const SAFE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const SAFE_MOD = /^[a-z0-9][a-z0-9_.-]{0,63}$/i;
@@ -9,7 +11,7 @@ const BADGE_MAX = 999;
 const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const text = (value) => (typeof value === "string" && value.trim() ? value.trim() : null);
 
-// { manifest } or { error } for the vx-extension.json text found in mods/<folder>/.
+// { manifest } or { error } for the herdr-vscode-extension.json text found in mods/<folder>/.
 export function parseManifest(source, folder) {
   let raw = null;
   try {

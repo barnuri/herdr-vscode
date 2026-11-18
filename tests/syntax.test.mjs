@@ -29,12 +29,12 @@ test("block comment and template carry over lines", () => {
 
 test("yaml and json keys, shell comments", () => {
   assert.deepEqual(kinds(lexLine("  image: node:20 # base", "yaml").runs).slice(0, 1), ["key:image"]);
-  assert.deepEqual(kinds(lexLine('  "name": "vx",', "json").runs), ['key:"name"', 'string:"vx"']);
+  assert.deepEqual(kinds(lexLine('  "name": "herdr-vscode",', "json").runs), ['key:"name"', 'string:"herdr-vscode"']);
   assert.deepEqual(kinds(lexLine('echo ${#arr[@]} # n', "sh").runs), ["comment:# n"]);
 });
 
 test("icon lookup against the built table", () => {
-  const table = JSON.parse(readFileSync(new URL("../mods/vx-icons/icons.json", import.meta.url), "utf8"));
+  const table = JSON.parse(readFileSync(new URL("../mods/herdr-vscode-icons/icons.json", import.meta.url), "utf8"));
   assert.match(iconFor(table, "package.json"), /f_npm\.svg$/);
   assert.match(iconFor(table, "src", { dir: true, open: true }), /fd_src_open\.svg$/);
   assert.match(iconFor(table, "src", { dir: true }), /fd_src\.svg$/);

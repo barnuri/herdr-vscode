@@ -1,0 +1,8 @@
+{
+  "id": "pending",
+  "name": "Pending Repos",
+  "title": "Pending Repos: repos with uncommitted or unpushed work",
+  "icon": "mods/herdr-vscode-pending/icon.svg",
+  "view": { "mod": "herdr-vscode-pending" },
+  "badge": "herdr-vscode.pending.badge"
+}

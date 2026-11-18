@@ -313,7 +313,7 @@ export function keyLabel(keys, mac = true) {
   return [ctrl, modifiers.has("alt") ? "Alt" : null, modifiers.has("shift") ? "Shift" : null, glyph].filter(Boolean).join("+");
 }
 
-// A key action ("tab.select:3", "vx-activity.search") -> run(name, args), using the command
+// A key action ("tab.select:3", "herdr-vscode-activity.search") -> run(name, args), using the command
 // list (commands()) to name the argument. null for a command that needs more than it gets.
 export function actionToRun(action, list = []) {
   const [name, arg] = String(action).split(/:(.*)/s);

@@ -1,4 +1,4 @@
-// The vx look: Herdr's own sizes and colours as small components. Values in, callbacks out.
+// The herdr-vscode look: Herdr's own sizes and colours as small components. Values in, callbacks out.
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, settings } from "herdr";
@@ -6,7 +6,7 @@ import { iconFor, isLight } from "./icons-core.js";
 
 export const TEXT = { tiny: 10, caption: 11, small: 12, body: 13, title: 14 };
 export const SPIN_MS = 900;
-export const UI = (name) => `mods/vx-icons/ui/${name}.svg`;
+export const UI = (name) => `mods/herdr-vscode-icons/ui/${name}.svg`;
 const DEFAULT_CODE_FONT = "JetBrains Mono";
 const DEFAULT_CODE_SIZE = 14;
 const DEFAULT_TINT_ALPHA = "26";
@@ -28,13 +28,13 @@ export const tint = (color, alpha = DEFAULT_TINT_ALPHA) => (HEX_COLOR.test(color
 
 export const Icon = (name, size = ICON_SIZE) => svg(UI(name)).size(size).flex_none();
 
-// A vx-icons name ("files"), or an svg path inside the app home ("mods/<mod>/icon.svg").
+// A herdr-vscode-icons name ("files"), or an svg path inside the app home ("mods/<mod>/icon.svg").
 export const IconAt = (icon, size = ICON_SIZE) => (icon.includes("/") ? svg(icon).size(size).flex_none() : Icon(icon, size));
 
 // A workspace root, as vscode-icons draws one in VS Code.
-export const RootIcon = (open = false, size = ICON_SIZE) => image(`mods/vx-icons/icons/root_folder${open ? "_open" : ""}.svg`).size(size).flex_none();
+export const RootIcon = (open = false, size = ICON_SIZE) => image(`mods/herdr-vscode-icons/icons/root_folder${open ? "_open" : ""}.svg`).size(size).flex_none();
 
-// The plain icon when vx-icons' table isn't loaded.
+// The plain icon when herdr-vscode-icons' table isn't loaded.
 export function FileIcon(table, path, { dir = false, open = false, size = ICON_SIZE, color } = {}) {
   const t = theme();
   const picture = iconFor(table, path, { dir, open, light: isLight(t.background) });
@@ -160,7 +160,7 @@ export function ConfirmView(view) {
   const spec = view.confirmSpec;
   const yesLabel = view.confirmBusy ? `${spec.action.doing ?? "Working"}…` : spec.label ?? "OK";
   return v_flex()
-    .id("vx-confirm").size_full().p(18).gap(10).bg(t.popover ?? t.surface).text_color(t.foreground)
+    .id("herdr-vscode-confirm").size_full().p(18).gap(10).bg(t.popover ?? t.surface).text_color(t.foreground)
     .track_focus(view.confirmFocus)
     .on_key_down((event, cx) => confirmKeyDown(view, event, cx))
     .child(div().text_size(TEXT.title).font_semibold().child(spec.title))
@@ -168,6 +168,6 @@ export function ConfirmView(view) {
     .children((spec.action.steps ?? [spec.action]).map((step) => ConfirmStep(t, step)))
     .child(div().flex_1())
     .child(h_flex().gap(8).justify_end()
-      .child(Button({ id: "vx-confirm-no", label: "Cancel", onClick: () => view.confirmNo(), disabled: view.confirmBusy }))
-      .child(Button({ id: "vx-confirm-yes", label: yesLabel, primary: !spec.danger, danger: Boolean(spec.danger), disabled: view.confirmBusy, onClick: (cx) => view.confirmYes(cx) })));
+      .child(Button({ id: "herdr-vscode-confirm-no", label: "Cancel", onClick: () => view.confirmNo(), disabled: view.confirmBusy }))
+      .child(Button({ id: "herdr-vscode-confirm-yes", label: yesLabel, primary: !spec.danger, danger: Boolean(spec.danger), disabled: view.confirmBusy, onClick: (cx) => view.confirmYes(cx) })));
 }

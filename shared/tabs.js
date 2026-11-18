@@ -4,15 +4,15 @@ import { panes, spaces, run, shared, setShared } from "herdr";
 
 const PENDING_MS = 2000;
 const MAX_RECENT_FILES = 50;
-const KEPT_TABS_KEY = "vx.tabs.kept";
-const RECENT_FILES_KEY = "vx.goto.recent";
-const FILES_MOD = "vx-files";
-const PREVIEW_MODS = [FILES_MOD, "vx-changes"];
+const KEPT_TABS_KEY = "herdr-vscode.tabs.kept";
+const RECENT_FILES_KEY = "herdr-vscode.goto.recent";
+const FILES_MOD = "herdr-vscode-files";
+const PREVIEW_MODS = [FILES_MOD, "herdr-vscode-changes"];
 
 const viewKey = (mod) => `${mod}.view`;
 
-// Tabs you kept (double-click a preview in vx-tabs) hold their own file and are never reused.
-// shared("vx.tabs.kept") = { [tabId]: { mod, value } }.
+// Tabs you kept (double-click a preview in herdr-vscode-tabs) hold their own file and are never reused.
+// shared("herdr-vscode.tabs.kept") = { [tabId]: { mod, value } }.
 export const keptTabs = () => shared(KEPT_TABS_KEY) ?? {};
 
 export function viewerTab(mod, spaceId) {

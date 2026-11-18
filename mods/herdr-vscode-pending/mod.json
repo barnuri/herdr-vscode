@@ -1,0 +1,9 @@
+{
+  "place": "none",
+  "title": "Pending Repos",
+  "focusable": true,
+  "settings": {
+    "auditScript": "",
+    "root": "~/code"
+  }
+}

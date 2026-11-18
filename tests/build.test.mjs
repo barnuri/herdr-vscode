@@ -17,7 +17,7 @@ function assertCarriesMod(card, mod) {
 
 test("mods carry the current shared code", () => {
   const sharedFiles = fs.readdirSync(`${repoRoot}shared`).filter((file) => file.endsWith(".js"));
-  for (const mod of fs.readdirSync(`${repoRoot}mods`).filter((name) => name.startsWith("vx-"))) {
+  for (const mod of fs.readdirSync(`${repoRoot}mods`).filter((name) => name.startsWith("herdr-vscode-"))) {
     for (const file of sharedFiles) {
       assert.equal(fs.readFileSync(`${repoRoot}mods/${mod}/${file}`, "utf8"), fs.readFileSync(`${repoRoot}shared/${file}`, "utf8"), `${mod}/${file} is stale`);
     }
@@ -52,7 +52,7 @@ test("layout cards carry the current layout, mods and themes", async () => {
   }
 });
 
-test("layoutMods: the vx mods a layout names, plus vx-icons", async () => {
+test("layoutMods: the herdr-vscode mods a layout names, plus herdr-vscode-icons", async () => {
   const { layoutMods } = await import("../tools/cards.mjs");
-  assert.deepEqual(layoutMods({ children: [{ content: { mod: "vx-tabs" } }, { content: { mod: "spaces" } }, { children: [{ content: { mod: "vx-panel", props: {} } }] }] }), ["vx-icons", "vx-panel", "vx-tabs"]);
+  assert.deepEqual(layoutMods({ children: [{ content: { mod: "herdr-vscode-tabs" } }, { content: { mod: "spaces" } }, { children: [{ content: { mod: "herdr-vscode-panel", props: {} } }] }] }), ["herdr-vscode-icons", "herdr-vscode-panel", "herdr-vscode-tabs"]);
 });

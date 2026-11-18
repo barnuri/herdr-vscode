@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextUntitledNumber, isUntitledName, untitledDirtyKey, resolveSaveAs } from "../mods/vx-files/untitled-core.js";
+import { nextUntitledNumber, isUntitledName, untitledDirtyKey, resolveSaveAs } from "../mods/herdr-vscode-files/untitled-core.js";
 
 test("nextUntitledNumber passes the counter and every open Untitled-N", () => {
   assert.equal(nextUntitledNumber([], 0), 1);
@@ -28,4 +28,17 @@ test("resolveSaveAs: relative to the repo, ~, absolute, dots, and errors", () =>
   assert.ok(resolveSaveAs("  ", "/r", "/h").error);
   assert.ok(resolveSaveAs("dir/", "/r", "/h").error);
   assert.ok(resolveSaveAs("~", "/r", "/h").error);
+});
+
+test("isEmptyEditorTab needs the empty mod as the only, non-terminal pane", async () => {
+  const { isEmptyEditorTab, closeDetail } = await import("../shared/untitled-core.js");
+  const empty = { id: "p1", tab: "t1", mod: "herdr-vscode-empty" };
+  assert.equal(isEmptyEditorTab("t1", [empty], "herdr-vscode-empty"), true);
+  assert.equal(isEmptyEditorTab("t1", [empty, { id: "p2", tab: "t1", terminal: true }], "herdr-vscode-empty"), false);
+  assert.equal(isEmptyEditorTab("t1", [{ ...empty, terminal: true }], "herdr-vscode-empty"), false);
+  assert.equal(isEmptyEditorTab("t1", [{ id: "p3", tab: "t1", mod: "herdr-vscode-files" }], "herdr-vscode-empty"), false);
+  assert.equal(isEmptyEditorTab("t1", [], "herdr-vscode-empty"), false);
+  const detail = closeDetail({ id: "t1", name: "x" }, [empty, { id: "p2", tab: "t1", terminal: true }], "stale empty");
+  assert.deepEqual(detail.terminals, ["p2"]);
+  assert.equal(detail.reason, "stale empty");
 });

@@ -1,5 +1,5 @@
 // The "repo ▾" switcher in the Changes, CI and Graph headers. Picking a repo makes it the active one
-// for every vx panel; the list is a popup copy of the same mod opened with props { repoMenu: { current } }.
+// for every herdr-vscode panel; the list is a popup copy of the same mod opened with props { repoMenu: { current } }.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, openOverlay, closeOverlay, props, shared } from "herdr";
@@ -58,7 +58,7 @@ function RepoRow(view, root, current, branch) {
 export function RepoMenu(view) {
   const t = theme();
   const ws = workspace();
-  const git = shared("vx.git") ?? {};
+  const git = shared("herdr-vscode.git") ?? {};
   const current = view.repoMenu?.current;
   const roots = ws?.roots ?? [];
   // A popup sizes to its content, so the list says how tall it is (it scrolls past the visible rows).

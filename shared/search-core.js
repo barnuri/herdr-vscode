@@ -1,4 +1,4 @@
-// The Search view (vx-search): git grep arguments for a query, and its output parsed into files
+// The Search view (herdr-vscode-search): git grep arguments for a query, and its output parsed into files
 // and matches.
 
 const BASE_GREP_ARGS = ["grep", "-n", "-I", "--column", "--no-color", "--untracked", "--full-name"];

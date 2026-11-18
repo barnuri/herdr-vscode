@@ -20,7 +20,7 @@ if (!extensionDir || !languagesFile) {
   console.error("usage: node tools/build-icons.mjs <vscode-icons extension folder> <languages.ts>");
   process.exit(USAGE_EXIT_CODE);
 }
-const outDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "mods", "vx-icons");
+const outDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "mods", "herdr-vscode-icons");
 const theme = JSON.parse(fs.readFileSync(path.join(extensionDir, THEME_FILE), "utf8"));
 const iconsDir = path.join(path.dirname(path.join(extensionDir, THEME_FILE)));
 const used = new Map();
@@ -117,4 +117,4 @@ fs.copyFileSync(path.join(extensionDir, LICENSE_SOURCE), path.join(outDir, LICEN
 if (skipped.size > 0) {
   console.warn(`skipped icons with active content: ${[...skipped].join(", ")}`);
 }
-console.log(`vx-icons: ${used.size} icons, ${Object.keys(table.fileNames).length} names, ${Object.keys(table.fileExtensions).length} extensions`);
+console.log(`herdr-vscode-icons: ${used.size} icons, ${Object.keys(table.fileNames).length} names, ${Object.keys(table.fileExtensions).length} extensions`);

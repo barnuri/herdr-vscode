@@ -3,15 +3,15 @@
 import { readTextFile, exec, run, shared, setShared, home, spaces } from "herdr";
 import { baseName } from "./ws.js";
 
-const MOD = "vx-scripts";
-const STORE_KEY = "vx.scripts";
+const MOD = "herdr-vscode-scripts";
+const STORE_KEY = "herdr-vscode.scripts";
 const MAX_LEVELS_UP = 6;
 const MAX_WORKSPACE_PACKAGES = 60;
 const MAX_RECENT = 3;
 const DEFAULT_PM = "npm";
 const PREFERRED_SCRIPTS = ["dev", "start", "serve"];
 export const PMS = ["npm", "pnpm", "bun", "yarn"];
-export const PM_ICON = (pm) => `mods/vx-icons/icons/${pm}.svg`;
+export const PM_ICON = (pm) => `mods/herdr-vscode-icons/icons/${pm}.svg`;
 const DECLARED_PM = /^(npm|pnpm|yarn|bun)@/;
 const LOCKFILE_SCRIPT = 'for f in bun.lock bun.lockb pnpm-lock.yaml yarn.lock package-lock.json; do [ -e "$1/$f" ] && { printf "%s" "$f"; exit 0; }; done; exit 0';
 const PM_BY_LOCKFILE = { "bun.lock": "bun", "bun.lockb": "bun", "pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "package-lock.json": "npm" };

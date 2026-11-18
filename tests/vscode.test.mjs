@@ -19,9 +19,9 @@ test("repo colours are stable and in the palette", () => {
 });
 
 test("layout block content swap copies, never mutates", () => {
-  const tree = { id: "root", type: "column", children: [{ id: "bottom", type: "column", children: [{ id: "term", type: "block", content: { mod: "vx-panel" } }] }] };
+  const tree = { id: "root", type: "column", children: [{ id: "bottom", type: "column", children: [{ id: "term", type: "block", content: { mod: "herdr-vscode-panel" } }] }] };
   const next = withContent(tree, "term", { terminal: "t7" });
   assert.deepEqual(findNode(next, "term").content, { terminal: "t7" });
-  assert.deepEqual(findNode(tree, "term").content, { mod: "vx-panel" });
+  assert.deepEqual(findNode(tree, "term").content, { mod: "herdr-vscode-panel" });
   assert.equal(withContent(tree, "nope", {}), null);
 });
