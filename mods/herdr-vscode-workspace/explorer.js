@@ -224,7 +224,7 @@ export const explorerMethods = {
       this.open = new Set();
     }
     const roots = this.ws?.roots ?? [];
-    if ((saved === null || this.ws?.auto) && roots.length === 1) {
+    if (roots.length === 1) {
       this.open.add(entryKey(roots[0].path, ""));
     }
   },
@@ -388,13 +388,15 @@ export const explorerMethods = {
       return null;
     }
     const selectedRel = this.selected.slice(prefix.length);
+    const shift = (this.ws?.roots?.length ?? 0) === 1 ? 1 : 0;
     if (!selectedRel) {
-      return 0;
+      return shift ? null : 0;
     }
-    return activeGuideLevel(path, selectedRel, selectedRel.split("/").length);
+    const level = activeGuideLevel(path, selectedRel, selectedRel.split("/").length);
+    return level === null ? null : level - shift;
   },
 
-  pushRootTree(t, rows, root) {
+  pushRootTree(t, rows, root, firstDepth = 1) {
     const marks = this.marksOf(root);
     const walk = (rel, depth) => {
       const list = this.entries.get(entryKey(root.path, rel));
@@ -409,19 +411,26 @@ export const explorerMethods = {
         if (!this.showDots && entry.name.startsWith(".")) {
           continue;
         }
-        rows.push(this.entryRow(t, root, rel, entry, depth, marks));
         const path = childPath(rel, entry.name);
+        this.noteRevealRow(entryKey(root.path, path), rows.length);
+        rows.push(this.entryRow(t, root, rel, entry, depth, marks));
         if (entry.dir && this.open.has(entryKey(root.path, path))) {
           walk(path, depth + 1);
         }
       }
     };
-    walk("", 1);
+    walk("", firstDepth);
   },
 
   explorerRows(t) {
     const rows = [];
-    (this.ws?.roots ?? []).forEach((root, index) => {
+    const roots = this.ws?.roots ?? [];
+    // One folder: like VS Code, its contents sit at the top level with no folder row.
+    if (roots.length === 1) {
+      this.pushRootTree(t, rows, roots[0], 0);
+      return rows;
+    }
+    roots.forEach((root, index) => {
       rows.push(this.rootRow(t, root, index));
       if (this.open.has(entryKey(root.path, ""))) {
         this.pushRootTree(t, rows, root);

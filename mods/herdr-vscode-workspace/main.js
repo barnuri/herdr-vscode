@@ -10,10 +10,12 @@ import { parseStatus } from "./git-core.js";
 import { askConfirm, confirmMethods, runAction } from "./actions.js";
 import { CLIPBOARD_KEY, pastePlan } from "./fileops-core.js";
 import { logInfo, toast, logError } from "./log.js";
+import { getSetting, loadSettings } from "./settings.js";
 import { TEXT, Icon, IconButton, ConfirmView } from "./ui.js";
 import { loadIcons } from "./icons.js";
 import { showInViewer } from "./tabs.js";
 import { explorerMethods } from "./explorer.js";
+import { revealMethods } from "./reveal.js";
 import { menuMethods, post } from "./menus.js";
 
 // Popups and dialogs post commands (shared "herdr-vscode.ws.cmd") that this panel runs, so a closing popup never drops half an action.
@@ -119,6 +121,7 @@ class HerdrVscodeWorkspace extends View {
     this.tops = new Map();
     this.width = HerdrVscodeWorkspace.INITIAL_WIDTH;
     this.initExplorer(cx);
+    this.initReveal();
     this.filter = "";
     this.filterState = InputState.new({ placeholder: "Filter files in the workspace" });
     this.filterState.on("change", (_event, cx) => {
@@ -163,15 +166,18 @@ class HerdrVscodeWorkspace extends View {
       cx.notify();
       return;
     }
-    const saved = localStorage.getItem(HerdrVscodeWorkspace.KEY_FILE);
     const ws = workspace();
-    if (ws?.roots?.length) {
+    if (ws?.roots?.length && (ws.auto || ws.file)) {
       this.adopt(ws, cx);
-    } else if (saved) {
-      await this.openFile(saved, cx);
+      return;
     }
-    if (!this.ws) {
-      await this.discover(cx);
+    // Like VS Code, the Explorer shows one folder (the focused terminal's repo) by default. A
+    // workspace opens only when you open one, and comes back after a restart only with
+    // explorer.restoreWorkspace on.
+    await loadSettings();
+    const saved = localStorage.getItem(HerdrVscodeWorkspace.KEY_FILE);
+    if (saved && getSetting("explorer", "restoreWorkspace", false)) {
+      await this.openFile(saved, cx);
     }
   }
 
@@ -246,22 +252,6 @@ class HerdrVscodeWorkspace extends View {
     this.adopt({ file: null, name: baseName(dir), dir, roots }, cx);
   }
 
-  // At start: a .code-workspace at or above the focused folder, else its git subfolders.
-  async discover(cx) {
-    const dir = ctx().focus.cwd ?? ctx().focus.space?.folder;
-    if (!dir) {
-      return;
-    }
-    const file = await findWorkspaceFile(dir);
-    if (file) {
-      return this.openFile(file, cx);
-    }
-    const roots = await folderRoots(dir);
-    if (roots.length) {
-      this.adopt({ file: null, name: baseName(dir), dir, roots }, cx);
-    }
-  }
-
   // Focus moved to a terminal (or the terminal changed folder): a pick hands over to it.
   followFocus() {
     const focus = ctx().focus;
@@ -295,6 +285,7 @@ class HerdrVscodeWorkspace extends View {
   }
 
   follow(cx) {
+    this.followReveal(cx);
     this.followFocus();
     this.followActiveFolder(cx);
     const context = ctx();
@@ -698,7 +689,7 @@ class HerdrVscodeWorkspace extends View {
     if (this.ws && !narrow) {
       root.child(this.filterBox(t));
     }
-    const body = v_flex().id("ws-body").flex_1().min_h(0).overflow_y_scrollbar().pb(6)
+    const body = v_flex().id("ws-body").flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.bodyScroll).pb(6)
       .on_hover((hovered, cx) => {
         this.treeHovered = hovered;
         cx.notify();
@@ -707,6 +698,7 @@ class HerdrVscodeWorkspace extends View {
       body.child(div().px(16).py(6).text_size(TEXT.small).text_color(t.ansi1).whitespace_normal().child(this.error));
     }
     this.fillBody(t, body, narrow);
+    this.scrollToReveal(this.error ? 1 : 0);
     return root.child(body);
   }
 
@@ -724,5 +716,5 @@ class HerdrVscodeWorkspace extends View {
   }
 }
 
-Object.assign(HerdrVscodeWorkspace.prototype, confirmMethods, explorerMethods, menuMethods);
+Object.assign(HerdrVscodeWorkspace.prototype, confirmMethods, explorerMethods, menuMethods, revealMethods);
 export default HerdrVscodeWorkspace;

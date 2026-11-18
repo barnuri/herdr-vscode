@@ -34,6 +34,7 @@ Every user-facing setting, preference or toggle is stored with `shared/settings.
 | `files.blame` | `false` | Blame column in the file viewer |
 | `explorer.showHidden` | `true` | Show hidden (dot) files in the Explorer and Files trees |
 | `explorer.indent` | `16` | Tree indent per level in px (0–40), Explorer, Files and Source Control trees |
+| `explorer.restoreWorkspace` | `false` | Reopen the last opened workspace after a restart; off = one-folder mode (the focused repo) |
 | `explorer.indentGuides` | `"always"` | Tree indent guides: `"always"`, `"onHover"` or `"none"` |
 | `editor.fontFamily` | Herdr's font | Code view font (preview, editor, diff, blame, hashes) |
 | `editor.fontSize` | Herdr's size | Code view font size |
