@@ -161,6 +161,15 @@ export const SYNTAX_SCOPES = {
   comment: "comment", string: "string", number: "constant.numeric", keyword: "storage.type",
   type: "entity.name.type", fn: "entity.name.function",
   constant: "constant.language", key: "meta.object-literal.key", tag: "entity.name.tag",
+  control: "keyword.control", variable: "variable", constvar: "variable.other.constant", regexp: "string.regexp",
+  escape: "constant.character.escape", attr: "entity.other.attribute-name", heading: "markup.heading",
+  bold: "markup.bold", raw: "markup.inline.raw", link: "markup.underline.link",
+  list: "punctuation.definition.list.begin.markdown", quote: "markup.quote",
+  selector: "entity.other.attribute-name.class.css", property: "support.type.property-name",
+  value: "support.constant.property-value", punct: "punctuation.definition.tag", entity: "constant.character.entity",
+  yamlKey: "entity.name.tag.yaml", component: "support.class.component",
+  interp: "punctuation.definition.template-expression.begin", atRule: "keyword.control.at-rule",
+  operator: "keyword.operator", arrow: "storage.type.function.arrow",
 };
 
 export function syntaxFromTokens(tokenColors) {

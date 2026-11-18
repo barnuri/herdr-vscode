@@ -3,6 +3,7 @@ import { v_flex, h_flex, Input, InputState, v_virtual_list, Scrollbar } from "gp
 import { theme, nextCommand, checking } from "herdr";
 import { workspace, git, ctx, baseName } from "./ws.js";
 import { grepArgs, parseGrep, matchSnippet } from "./search-core.js";
+import { lexCached, sliceRuns, languageOf, syntaxColors } from "./syntax-core.js";
 import { showInViewer } from "./tabs.js";
 import { TEXT, Icon, FileIcon, RootIcon, tint } from "./ui.js";
 import { loadIcons } from "./icons.js";
@@ -279,11 +280,15 @@ export default class HerdrVscodeSearch extends View {
     const match = row.m;
     const snippet = matchSnippet(match.text, match.col, this.matchLength(match.text, match.col), { before: HerdrVscodeSearch.SNIPPET_CONTEXT });
     const part = () => div().flex_none().whitespace_nowrap();
+    const runs = lexCached(match.text, languageOf(row.f.rel));
+    const syntax = syntaxColors(t);
+    const colored = (from, to) => sliceRuns(runs, from, to).map((run) => part().text_color(run.kind ? syntax[run.kind] : t.foreground).child(run.text));
     return h_flex().id(row.key).h(HerdrVscodeSearch.ROW_HEIGHT).w_full().pl(pad + HerdrVscodeSearch.MATCH_EXTRA_PAD_PX).pr(6).items_center().cursor_pointer().hover((style) => style.bg(t.hover))
       .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap().text_size(TEXT.small)
-        .child(part().text_color(t.muted).child(snippet.head))
+        .when(snippet.ellipsis, (el) => el.child(part().text_color(t.dim).child("…")))
+        .children(colored(snippet.headFrom, snippet.start))
         .child(part().rounded(2).bg(tint(t.ansi3, HerdrVscodeSearch.HIT_ALPHA)).text_color(t.foreground).child(snippet.hit))
-        .child(part().text_color(t.muted).child(snippet.tail)))
+        .children(colored(snippet.end, snippet.tailEnd)))
       .child(div().flex_none().pl(6).text_size(TEXT.caption).text_color(t.dim).child(String(match.line)));
   }
 

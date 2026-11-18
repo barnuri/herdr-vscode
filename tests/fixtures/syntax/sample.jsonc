@@ -1,0 +1,8 @@
+{
+  // comment
+  "name": "herdr-vscode",
+  "version": 1.5,
+  "private": true,
+  "list": [1, 2, null, "x"],
+  "nested": { "key": "value\n" }
+}

@@ -4,7 +4,7 @@ import { theme, readTextFile, writeTextFile, exec, appHome, shared, setShared } 
 import { git, bump } from "./ws.js";
 import { parseBlame, heat, shortAge, NOT_COMMITTED } from "./blame-core.js";
 import { parseLog, LOG_FORMAT, parseHunks } from "./git-core.js";
-import { lexLines, languageOf, syntaxColors } from "./syntax-core.js";
+import { LexCache, languageOf, syntaxColors, editorSyntax } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, codeFont, codeSize, codeLineHeight, tabSpaces, codeWrap, tint } from "./ui.js";
 import { viewerValue, viewerTab, keptTabs, showInViewer } from "./tabs.js";
 import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
@@ -17,7 +17,6 @@ const POLL_MS = 2000;
 const FOLLOW_MS = 100;
 const AUTOSAVE_TICK_MS = 250;
 const MAX_LINES = 20000;
-const MAX_LEXED_LINES = 6000;
 const MAX_CACHE_NAME = 150;
 const FILE_HISTORY_COUNT = 100;
 const LINE_HISTORY_COUNT = 50;
@@ -321,7 +320,7 @@ export const previewMethods = {
     const all = text.replace(/\r/g, "").replace(/\t/g, tabSpaces()).split("\n");
     this.lines = all.slice(0, MAX_LINES);
     this.truncated = all.length > MAX_LINES;
-    this.runs = this.lines.length <= MAX_LEXED_LINES ? lexLines(this.lines, languageOf(file.rel)) : null;
+    this.lexed = new LexCache(this.lines, languageOf(file.rel));
     if (this.blameOn) {
       this.loadBlame(cx);
     }
@@ -493,7 +492,7 @@ export const previewMethods = {
     const lineNumber = i + 1;
     const mark = this.lineMark(lineNumber);
     const bar = markBarColor(t, mark);
-    const runs = this.runs?.[i] ?? lexLines([layout.lines[i]], layout.lang)[0];
+    const runs = this.lexed.runsAt(i);
     const selected = this.selLine === lineNumber;
     return h_flex().id(`l${i}`).h(layout.height).w_full().items_center()
       .when(selected, (el) => el.bg(t.selected))
@@ -521,6 +520,10 @@ export const previewMethods = {
     const layout = {
       colors: syntaxColors(t), size, height: Math.round(size * codeLineHeight()), lines, lang: languageOf(this.file.rel), blameOn,
     };
+    // Lexed lazily: only up to the last row shown, each line once.
+    if (this.lexed?.lines !== lines || this.lexed.lang !== layout.lang) {
+      this.lexed = new LexCache(lines, layout.lang);
+    }
     const listId = `pv-${this.fileKey}`;
     const widest = lines.reduce((longest, line) => Math.max(longest, line.length), 0);
     const minWidth = Math.max(MIN_CODE_WIDTH, (widest * CHAR_WIDTH_RATIO + 6) * size + (blameOn ? BLAME_W + 4 : 0));
@@ -574,7 +577,7 @@ export const previewMethods = {
     const colors = syntaxColors(theme());
     this.editor = EditorState.new({
       language: languageOf(this.file.rel) ?? undefined, value: this.text, font_family: codeFont(), font_size: codeSize(), soft_wrap: codeWrap(),
-      syntax: { keyword: colors.keyword, string: colors.string, comment: colors.comment, function: colors.fn, type: colors.type, number: colors.number, constant: colors.constant },
+      syntax: editorSyntax(colors),
     });
     this.saved = this.text;
     this.editor.on("change", (_event, cx) => {

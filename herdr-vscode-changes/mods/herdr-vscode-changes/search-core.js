@@ -62,8 +62,10 @@ export function parseGrep(stdout, { maxMatches = DEFAULT_MAX_MATCHES } = {}) {
 export function matchSnippet(text, col, length, { before = DEFAULT_SNIPPET_BEFORE, width = DEFAULT_SNIPPET_WIDTH } = {}) {
   const start = Math.max(0, col - 1);
   const from = Math.max(0, start - before);
-  const head = (from > 0 ? ELLIPSIS : "") + text.slice(from, start).replace(/^\s+/, "");
+  const lead = text.slice(from, start).match(/^\s*/)[0].length;
+  const head = (from > 0 ? ELLIPSIS : "") + text.slice(from + lead, start);
   const hit = text.slice(start, start + length);
   const tail = text.slice(start + length, start + length + width);
-  return { head, hit, tail };
+  // Text offsets of the parts, to colour them with the line's syntax runs.
+  return { head, hit, tail, ellipsis: from > 0, headFrom: from + lead, start, end: start + length, tailEnd: start + length + width };
 }

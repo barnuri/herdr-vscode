@@ -1,0 +1,15 @@
+# CI workflow
+name: build
+on:
+  push:
+    branches: [main, "release/*"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run
+        run: npm test -- --retries 3
+        env:
+          DEBUG: true
+          COUNT: 42

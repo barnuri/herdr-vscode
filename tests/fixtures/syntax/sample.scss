@@ -1,0 +1,8 @@
+$accent: #0078d4;
+@mixin card($radius: 4px) {
+  border-radius: $radius;
+}
+.card {
+  @include card(8px);
+  &:hover { color: darken($accent, 10%); }
+}

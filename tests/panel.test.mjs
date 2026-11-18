@@ -74,7 +74,7 @@ test("grepArgs and parseGrep", () => {
   assert.equal(grep.total, 3);
   assert.deepEqual(grep.files.map((file) => [file.rel, file.matches.length]), [["src/a.ts", 2], ["README.md", 1]]);
   assert.equal(parseGrep("a:1:1:x\nb:2:1:y\n", { maxMatches: 1 }).truncated, true);
-  assert.deepEqual(matchSnippet("    const foo = 1", 11, 3), { head: "const ", hit: "foo", tail: " = 1" });
+  assert.deepEqual(matchSnippet("    const foo = 1", 11, 3), { head: "const ", hit: "foo", tail: " = 1", ellipsis: false, headFrom: 4, start: 10, end: 13, tailEnd: 173 });
 });
 
 test("countProblems: workspace problems plus check results", async () => {

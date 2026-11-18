@@ -1,0 +1,9 @@
+/* Theme */
+.panel > .title:hover, #main {
+  color: #ff0000;
+  margin: 0 4px 1.5em;
+  background: var(--bg, rgba(0, 0, 0, 0.5));
+}
+@media (max-width: 600px) {
+  .panel { display: none !important; }
+}

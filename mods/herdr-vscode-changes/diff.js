@@ -4,7 +4,7 @@ import { theme, readTextFile, writeTextFile, exec } from "herdr";
 import { git, bump } from "./ws.js";
 import { splitHunks, hunkPatch } from "./scm-core.js";
 import { READ, diffRows, splitRows, lineStartOffset } from "./git-core.js";
-import { lexLine, languageOf, syntaxColors } from "./syntax-core.js";
+import { lexCached, languageOf, syntaxColors, editorSyntax } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, codeLineHeight, tabSpaces, codeWrap, tint, SPIN_MS } from "./ui.js";
 import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
 import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
@@ -240,7 +240,7 @@ export const diffMethods = {
       return div().flex_1().h_full().bg(tint(colors.raised, "80"));
     }
     const background = row.kind === ADDED ? tint(colors.ansi2, "1f") : row.kind === REMOVED ? tint(colors.ansi1, "1f") : null;
-    const runs = lexLine(row.text, lang).runs;
+    const runs = lexCached(row.text, lang);
     return h_flex().flex_1().min_w(0).h_full().items_center().when(Boolean(background), (el) => el.bg(background))
       .children(this.lineNumbers(colors, row, side, size))
       .child(div().w(size * MARK_WIDTH_FACTOR).flex_none().text_center().text_color(kindColor(colors, row.kind)).child(row.kind === CONTEXT ? "" : row.kind))
@@ -297,7 +297,7 @@ export const diffMethods = {
     const colors = syntaxColors(theme());
     this.editor = EditorState.new({
       language: languageOf(target.path) ?? undefined, value: text, font_family: codeFont(), font_size: codeSize(), soft_wrap: codeWrap(),
-      syntax: { keyword: colors.keyword, string: colors.string, comment: colors.comment, function: colors.fn, type: colors.type, number: colors.number, constant: colors.constant },
+      syntax: editorSyntax(colors),
     });
     this.saved = text;
     this.editorTarget = target;
