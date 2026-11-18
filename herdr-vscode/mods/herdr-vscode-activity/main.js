@@ -1,13 +1,13 @@
 import { View, div } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { theme, layout, run, shared, setShared, agents, nextCommand, checking, props, openOverlay, closeOverlay, watchFolder } from "herdr";
+import { theme, layout, run, shared, setShared, agents, nextCommand, checking, props, openOverlay, closeOverlay, watchFolder, home, exec, readTextFile, writeTextFile } from "herdr";
 import { ctx, repoTop, baseName, workspace } from "./ws.js";
 import { showInViewer } from "./tabs.js";
 import { IconAt } from "./ui.js";
 import { findNode } from "./layout-core.js";
 import { extensions, scanExtensions, publishExtensions, modsDir } from "./extensions.js";
 import { mergeViews, badgeText, stackChild, withStackChild } from "./extensions-core.js";
-import { toast } from "./log.js";
+import { toast, logError } from "./log.js";
 
 class HerdrVscodeActivity extends View {
   static STACK = "sidebar-views";
@@ -22,6 +22,10 @@ class HerdrVscodeActivity extends View {
   static WAITING_STATUSES = ["blocked", "done"];
   static WORKING_STATUS = "working";
   static PREFS_KEY = "herdr-vscode.activity";
+  static MOD = "herdr-vscode-activity";
+  static CONFIG_DIR = ".config/herdr-vscode";
+  static CONFIG_FILE = "settings.json";
+  static CONFIG_TIMEOUT_MS = 5000;
   static EXPLORER_SECTIONS = [
     { id: "timeline", icon: "history", name: "Explorer: Timeline" },
     { id: "npm", icon: "play", name: "Explorer: NPM Scripts" },
@@ -65,6 +69,10 @@ class HerdrVscodeActivity extends View {
       return;
     }
     cx.timer.every(HerdrVscodeActivity.BADGE_REFRESH_MS, (cx) => cx.notify());
+    cx.spawn(async (cx) => {
+      await HerdrVscodeActivity.loadConfig();
+      cx.notify();
+    });
     this.watchExtensions(cx);
     cx.spawn(async (cx) => {
       for (;;) {
@@ -245,6 +253,77 @@ class HerdrVscodeActivity extends View {
 
   static savePrefs(patch) {
     setShared(HerdrVscodeActivity.PREFS_KEY, { ...HerdrVscodeActivity.prefs(), ...patch });
+    HerdrVscodeActivity.saveConfig();
+  }
+
+  static configDir() {
+    return `${home()}/${HerdrVscodeActivity.CONFIG_DIR}`;
+  }
+
+  static configPath() {
+    return `${HerdrVscodeActivity.configDir()}/${HerdrVscodeActivity.CONFIG_FILE}`;
+  }
+
+  static async readConfig() {
+    const text = await readTextFile(HerdrVscodeActivity.configPath()).catch(() => null);
+    if (!text) {
+      return { text: null, config: {} };
+    }
+    try {
+      return { text, config: JSON.parse(text) };
+    } catch (error) {
+      logError(HerdrVscodeActivity.MOD, "settings.json is not valid JSON", String(error?.message ?? error));
+      return { text, config: {} };
+    }
+  }
+
+  // ~/.config/herdr-vscode/settings.json keeps the activity-bar order, hidden icons and
+  // Explorer sections, so they survive restarts and reinstalls.
+  static async loadConfig() {
+    const { text, config } = await HerdrVscodeActivity.readConfig();
+    if (text === null) {
+      await HerdrVscodeActivity.saveConfig();
+      return;
+    }
+    const activity = config.activity ?? {};
+    setShared(HerdrVscodeActivity.PREFS_KEY, {
+      order: Array.isArray(activity.order) ? activity.order : HerdrVscodeActivity.prefs().order,
+      hidden: Array.isArray(activity.hidden) ? activity.hidden : HerdrVscodeActivity.prefs().hidden,
+    });
+    const shown = activity.explorerSections ?? {};
+    for (const section of HerdrVscodeActivity.EXPLORER_SECTIONS) {
+      const node = findNode(layout(), section.id);
+      if (!node || typeof shown[section.id] !== "boolean" || shown[section.id] === !node.hidden) {
+        continue;
+      }
+      run(shown[section.id] ? "layout.show" : "layout.hide", { id: section.id });
+    }
+  }
+
+  static sectionsShown(override = {}) {
+    const shown = {};
+    for (const section of HerdrVscodeActivity.EXPLORER_SECTIONS) {
+      const node = findNode(layout(), section.id);
+      if (node) {
+        shown[section.id] = override[section.id] ?? !node.hidden;
+      }
+    }
+    return shown;
+  }
+
+  static async saveConfig(sectionOverride = {}) {
+    if (checking()) {
+      return;
+    }
+    try {
+      const { text, config } = await HerdrVscodeActivity.readConfig();
+      const { order, hidden } = HerdrVscodeActivity.prefs();
+      const next = { ...config, activity: { ...config.activity, order, hidden, explorerSections: HerdrVscodeActivity.sectionsShown(sectionOverride) } };
+      await exec("mkdir", ["-p", HerdrVscodeActivity.configDir()], { timeout: HerdrVscodeActivity.CONFIG_TIMEOUT_MS });
+      await writeTextFile(HerdrVscodeActivity.configPath(), `${JSON.stringify(next, null, 2)}\n`, text);
+    } catch (error) {
+      logError(HerdrVscodeActivity.MOD, "could not save settings.json", String(error?.message ?? error));
+    }
   }
 
   toggleHidden(id) {
@@ -276,6 +355,7 @@ class HerdrVscodeActivity extends View {
   static toggleSection(id) {
     const hidden = Boolean(findNode(layout(), id)?.hidden);
     run(hidden ? "layout.show" : "layout.hide", { id });
+    HerdrVscodeActivity.saveConfig({ [id]: hidden });
   }
 
   renderVisibilityMenu() {
