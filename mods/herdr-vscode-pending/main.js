@@ -10,6 +10,7 @@ import { repoWebPage } from "./remote-url.js";
 import ContextMenu from "./context-menu.js";
 import { parseAudit, summaryText } from "./pending-core.js";
 import { toast, logError } from "./log.js";
+import { runAction } from "./actions.js";
 
 class HerdrVscodePending extends View {
   static MOD = "herdr-vscode-pending";
@@ -169,7 +170,23 @@ class HerdrVscodePending extends View {
       .child(div().flex_none().max_w(160).truncate().child(repo.rel))
       .child(div().flex_none().text_size(TEXT.caption).text_color(t.ansi6 ?? t.muted).child(repo.branch))
       .child(h_flex().flex_1().min_w(0).gap(5).overflow_hidden().text_size(TEXT.caption)
-        .children(repo.markers.map((marker) => div().flex_none().text_color(HerdrVscodePending.markerColor(marker.kind, t)).child(marker.text))));
+        .children(repo.markers.map((marker) => div().flex_none().text_color(HerdrVscodePending.markerColor(marker.kind, t)).child(marker.text))))
+      .children(repo.sync ? [this.syncButton(repo)] : []);
+  }
+
+  // Pull then push, or push alone, with no confirm; the view scans again when it ends.
+  syncButton(repo) {
+    const pull = repo.sync === "pull";
+    return IconButton({
+      id: `sync-${repo.path}`,
+      icon: pull ? "arrow-down" : "arrow-up",
+      label: pull ? "Pull, then push" : "Push",
+      onClick: () => {
+        const steps = [...(pull ? [{ cmd: "git", args: ["pull"] }] : []), { cmd: "git", args: ["push"] }];
+        runAction({ cmd: "git", args: steps[0].args, steps, cwd: repo.path, doing: pull ? "Pulling and pushing" : "Pushing", done: `${pull ? "Synced" : "Pushed"} ${repo.rel}`, root: repo.path })
+          .finally(() => run(`${HerdrVscodePending.MOD}.refresh`));
+      },
+    });
   }
 
   header(t) {

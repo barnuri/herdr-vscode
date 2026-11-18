@@ -20,6 +20,22 @@ export function markersOf(status, headNeverPushed) {
   return headNeverPushed ? [...markers, { kind: "noUpstream", text: NO_UPSTREAM }] : markers;
 }
 
+const FILE_KEYS = ["new", "untracked", "modify", "deleted", "merges"];
+
+// A repo whose only pending work is commits gets one button: "push", or "pull" first when
+// the remote also moved (plain git pull / git push, as the user's git config says).
+// File changes, no remote or no upstream get none.
+export function syncKindOf(entry) {
+  const status = entry?.status ?? {};
+  if (!entry?.has_remote || entry.head_never_pushed || !status.upstream || count(status.ahead) === 0) {
+    return null;
+  }
+  if (FILE_KEYS.some((key) => count(status[key]) > 0)) {
+    return null;
+  }
+  return count(status.behind) > 0 ? "pull" : "push";
+}
+
 export function relativeTo(path, root) {
   const base = String(root ?? "").replace(/\/+$/, "");
   return base && path.startsWith(`${base}/`) ? path.slice(base.length + 1) : path;
@@ -42,6 +58,7 @@ export function parseAudit(stdout) {
     branch: entry.status?.branch || NO_BRANCH,
     hasRemote: Boolean(entry.has_remote),
     markers: markersOf(entry.status, Boolean(entry.head_never_pushed)),
+    sync: syncKindOf(entry),
   }));
   return { root: data.root ?? null, scanned: Number(data.scanned) || 0, repos };
 }

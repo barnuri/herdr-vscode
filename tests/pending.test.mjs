@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { markersOf, relativeTo, parseAudit, summaryText } from "../mods/herdr-vscode-pending/pending-core.js";
+import { markersOf, relativeTo, parseAudit, summaryText, syncKindOf } from "../mods/herdr-vscode-pending/pending-core.js";
 
 const status = (overrides) => ({ branch: "master", upstream: true, behind: 0, ahead: 0, new: 0, untracked: 0, modify: 0, deleted: 0, merges: 0, ...overrides });
 
@@ -33,4 +33,16 @@ test("parseAudit reads the --json output and reports bad output", () => {
   assert.equal(summaryText(result), "2 of 70 repos pending");
   assert.match(parseAudit("Traceback").error, /no JSON/);
   assert.match(parseAudit("{}").error, /pending/);
+});
+
+test("syncKindOf: push or pull only when commits are the only pending work", () => {
+  const base = { has_remote: true, head_never_pushed: false, status: { upstream: true, ahead: 2, behind: 0 } };
+  assert.equal(syncKindOf(base), "push");
+  assert.equal(syncKindOf({ ...base, status: { ...base.status, behind: 1 } }), "pull");
+  assert.equal(syncKindOf({ ...base, status: { ...base.status, modify: 1 } }), null);
+  assert.equal(syncKindOf({ ...base, status: { ...base.status, untracked: 3 } }), null);
+  assert.equal(syncKindOf({ ...base, status: { ...base.status, ahead: 0 } }), null);
+  assert.equal(syncKindOf({ ...base, has_remote: false }), null);
+  assert.equal(syncKindOf({ ...base, head_never_pushed: true }), null);
+  assert.equal(syncKindOf({ ...base, status: { ...base.status, upstream: false } }), null);
 });
