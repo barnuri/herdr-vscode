@@ -5,9 +5,10 @@ import { active, setActive, git } from "./ws.js";
 import { TEXT, Icon, FileIcon, RootIcon, markColor } from "./ui.js";
 import { showInViewer } from "./tabs.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
+import { withTreeIndent, twistieSlot, treePadding } from "./tree-ui.js";
+import { activeGuideLevel } from "./tree-core.js";
 
 const ROW = 22;
-const INDENT = 12;
 const MAX_ROWS = 2500;
 const MAX_IGNORED = 5000;
 const MAX_FILTER_HITS = 300;
@@ -323,7 +324,7 @@ export const explorerMethods = {
     const dot = rootDotColor(t, status, ci);
     const dragging = this.drag && this.drag.from !== index;
     return h_flex()
-      .id(`root-${root.path}`).h(ROW + 2).flex_none().pl(4).pr(8).gap(4).items_center()
+      .id(`root-${root.path}`).h(ROW + 2).flex_none().pl(treePadding(0)).pr(8).gap(4).items_center()
       .bg(isActive ? t.selected : TRANSPARENT).when(!isActive, (el) => el.hover((style) => style.bg(t.hover)))
       .when(Boolean(dragging), (el) => el.border_t(1).border_color(t.accent))
       .cursor_pointer().text_size(TEXT.body)
@@ -334,8 +335,8 @@ export const explorerMethods = {
         cx.stop_propagation();
         this.openMenu({ kind: "root", root, index, count: this.ws.roots.length });
       })
-      .child(Icon(open ? "chevron-down" : "chevron-right", 12).text_color(t.dim))
-      .child(RootIcon(open, 15))
+      .child(twistieSlot(Icon(open ? "chevron-down" : "chevron-right", 14).text_color(t.dim)))
+      .child(RootIcon(open, 16))
       .child(div().flex_1().min_w(0).truncate().font_medium().text_color(isActive ? t.foreground : t.muted).child(root.name))
       .when(Boolean(status?.branch), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(TEXT.caption).text_color(t.dim).child(status.branch)))
       .child(div().w(7).flex_none().h(7).rounded(4).when(Boolean(dot), (el) => el.bg(dot)));
@@ -361,8 +362,8 @@ export const explorerMethods = {
     const ignored = !mark && this.isIgnored(root.path, path);
     const color = entryColor(t, mark, below, ignored);
     const selected = this.selected === key;
-    return h_flex()
-      .id(`e-${key}`).h(ROW).flex_none().pl(4 + depth * INDENT).pr(8).gap(4).items_center()
+    const row = h_flex()
+      .id(`e-${key}`).h(ROW).flex_none().pr(8).gap(4).items_center()
       .bg(selected ? t.selected : TRANSPARENT).when(!selected, (el) => el.hover((style) => style.bg(t.hover)))
       .cursor_pointer().text_size(TEXT.body)
       .on_click((_event, cx) => this.clickEntry(cx, root, path, entry, key))
@@ -372,11 +373,25 @@ export const explorerMethods = {
         this.openMenu({ kind: "entry", root, rel: path, dir: entry.dir });
         cx.notify();
       })
-      .child(entry.dir ? Icon(open ? "chevron-down" : "chevron-right", 12).text_color(t.dim) : div().w(12).flex_none())
-      .child(FileIcon(this.icons, `${root.path}/${path}`, { dir: entry.dir, open, size: 14 }))
+      .child(twistieSlot(entry.dir ? Icon(open ? "chevron-down" : "chevron-right", 14).text_color(t.dim) : null))
+      .child(FileIcon(this.icons, `${root.path}/${path}`, { dir: entry.dir, open, size: 16 }))
       .child(div().flex_1().min_w(0).truncate().text_color(color).child(entry.name))
       .when(Boolean(mark), (el) => el.child(div().w(10).flex_none().text_size(TEXT.caption).text_color(color).child(mark)))
       .when(Boolean(below), (el) => el.child(div().size(5).flex_none().rounded(3).bg(t.ansi3)));
+    return withTreeIndent(row, t, { depth, height: ROW, hovered: this.treeHovered, activeLevel: this.activeGuide(root, path) });
+  },
+
+  // The guide under the selected folder is brighter for the rows inside it.
+  activeGuide(root, path) {
+    const prefix = `${root.path}\0`;
+    if (!this.selected?.startsWith(prefix)) {
+      return null;
+    }
+    const selectedRel = this.selected.slice(prefix.length);
+    if (!selectedRel) {
+      return 0;
+    }
+    return activeGuideLevel(path, selectedRel, selectedRel.split("/").length);
   },
 
   pushRootTree(t, rows, root) {
@@ -384,7 +399,7 @@ export const explorerMethods = {
     const walk = (rel, depth) => {
       const list = this.entries.get(entryKey(root.path, rel));
       if (!list) {
-        rows.push(div().h(ROW).pl(4 + depth * INDENT + 16).text_size(TEXT.caption).text_color(t.dim).child("Loading…"));
+        rows.push(div().h(ROW).pl(treePadding(depth) + 22).text_size(TEXT.caption).text_color(t.dim).child("Loading…"));
         return;
       }
       for (const entry of list) {

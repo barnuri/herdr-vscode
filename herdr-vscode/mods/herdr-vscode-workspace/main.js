@@ -698,7 +698,11 @@ class HerdrVscodeWorkspace extends View {
     if (this.ws && !narrow) {
       root.child(this.filterBox(t));
     }
-    const body = v_flex().id("ws-body").flex_1().min_h(0).overflow_y_scrollbar().pb(6);
+    const body = v_flex().id("ws-body").flex_1().min_h(0).overflow_y_scrollbar().pb(6)
+      .on_hover((hovered, cx) => {
+        this.treeHovered = hovered;
+        cx.notify();
+      });
     if (this.error) {
       body.child(div().px(16).py(6).text_size(TEXT.small).text_color(t.ansi1).whitespace_normal().child(this.error));
     }

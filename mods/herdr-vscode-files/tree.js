@@ -7,10 +7,11 @@ import { TEXT, Icon, IconButton, Badge, FileIcon, Message, markColor } from "./u
 import { showInViewer } from "./tabs.js";
 import { toast, logError } from "./log.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
+import { withTreeIndent, twistieSlot } from "./tree-ui.js";
+import { activeGuideLevel } from "./tree-core.js";
 
 const MOD = "herdr-vscode-files";
 const ROW = 24;
-const INDENT = 12;
 const PER_FOLDER = 2000;
 const MAX_ROWS = 8000;
 const MATCHES = 300;
@@ -387,16 +388,19 @@ export const treeMethods = {
     const ignored = this.isIgnoredPath(row.rel);
     const color = this.rowColor(t, mark, below, ignored);
     const selected = this.selected === row.rel;
-    const chevron = row.dir ? Icon(row.open ? "chevron-down" : "chevron-right", 12).text_color(t.dim) : div().w(12).flex_none();
-    return h_flex()
-      .id(`row-${row.key}`).h(ROW).w_full().pl(8 + row.depth * INDENT).pr(8).gap(5).items_center().rounded(5)
+    const chevron = row.dir ? Icon(row.open ? "chevron-down" : "chevron-right", 14).text_color(t.dim) : null;
+    const el = h_flex()
+      .id(`row-${row.key}`).h(ROW).w_full().pr(8).gap(4).items_center().rounded(5)
       .bg(selected ? t.selected : TRANSPARENT).text_size(TEXT.body).cursor_pointer()
-      .child(chevron)
-      .child(FileIcon(this.icons, `${this.root}/${row.rel}`, { dir: row.dir, open: row.open, size: 14 }))
+      .child(twistieSlot(chevron))
+      .child(FileIcon(this.icons, `${this.root}/${row.rel}`, { dir: row.dir, open: row.open, size: 16 }))
       .child(div().flex_1().min_w(0).truncate().text_color(color).when(ignored && !mark, (el) => el.opacity(0.6)).child(row.name))
       .when(Boolean(row.folder), (el) => el.child(div().max_w(140).truncate().text_size(TEXT.caption).text_color(t.dim).child(row.folder)))
       .when(Boolean(mark), (el) => el.child(div().w(12).flex_none().text_size(TEXT.caption).text_color(color).child(mark)))
       .when(below && !mark, (el) => el.child(div().size(5).flex_none().rounded(3).bg(t.ansi3)));
+    const selectedDir = this.selectedDir;
+    const activeLevel = selectedDir ? activeGuideLevel(row.rel, selectedDir, selectedDir.split("/").length - 1) : null;
+    return withTreeIndent(el, t, { depth: row.depth, height: ROW, hovered: this.treeHovered, activeLevel });
   },
 
   findRow(key) {
@@ -533,6 +537,7 @@ export const treeMethods = {
     }
     const rows = this.filter ? this.filterRows() : this.treeRows();
     this.lastRows = rows;
+    this.selectedDir = rows.find((row) => row.dir && row.rel === this.selected)?.rel ?? null;
     if (this.filter && !this.index) {
       return body.child(Message("Indexing…"));
     }
@@ -545,6 +550,10 @@ export const treeMethods = {
         .on_item_click((key, cx) => this.press(key, cx))
         .on_item_secondary_click((key, _event, cx) => {
           this.openMenu(key);
+          cx.notify();
+        })
+        .on_hover((hovered, cx) => {
+          this.treeHovered = hovered;
           cx.notify();
         })
         .size_full().px(4))

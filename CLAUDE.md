@@ -33,6 +33,8 @@ Every user-facing setting, preference or toggle is stored with `shared/settings.
 | `files.autoSave` | `"afterDelay"` | Auto Save: `"afterDelay"` or `"off"` |
 | `files.blame` | `false` | Blame column in the file viewer |
 | `explorer.showHidden` | `true` | Show hidden (dot) files in the Explorer and Files trees |
+| `explorer.indent` | `16` | Tree indent per level in px (0–40), Explorer, Files and Source Control trees |
+| `explorer.indentGuides` | `"always"` | Tree indent guides: `"always"`, `"onHover"` or `"none"` |
 | `search.caseSensitive` | `false` | Search: match case |
 | `search.word` | `false` | Search: whole word |
 | `search.regex` | `false` | Search: regular expression |

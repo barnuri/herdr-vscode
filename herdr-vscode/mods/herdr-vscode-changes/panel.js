@@ -11,6 +11,7 @@ import { askConfirm, runAction } from "./actions.js";
 import { openScmMenu, openScmAsk } from "./scm-popups.js";
 import { toast, logError } from "./log.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
+import { withTreeIndent, twistieSlot } from "./tree-ui.js";
 
 const MOD = "herdr-vscode-changes";
 const HISTORY_PART = "history";
@@ -31,7 +32,6 @@ const COMMIT_ALL = "commitAll";
 const SHOWN_FILES_LIMIT = 1000;
 const INDEX_BATCH = 200;
 const ROW_HEIGHT = 24;
-const INDENT = 12;
 const WRITE_TIMEOUT_MS = 120000;
 const SUCCESS_TIMEOUT_MS = 3000;
 const SHORT_SHA = 8;
@@ -730,7 +730,7 @@ export const panelMethods = {
     const selected = this.selected === key;
     const hot = this.hot === key;
     const deleted = letter === "D";
-    const row = h_flex().id(`c-${key}`).h(ROW_HEIGHT).flex_none().mx(4).pl(6 + depth * INDENT).pr(4).gap(6).items_center().rounded(5)
+    const row = h_flex().id(`c-${key}`).h(ROW_HEIGHT).flex_none().mx(4).pr(4).gap(6).items_center().rounded(5)
       .bg(selected ? colors.selected : hot ? colors.hover : TRANSPARENT).cursor_pointer().text_size(TEXT.body)
       .tooltip(this.fileTooltip(file, stat))
       .on_click((event, cx) => this.clickFile(event, file, scope, key, deleted, cx))
@@ -740,8 +740,9 @@ export const panelMethods = {
         this.fileMenu(file, scope);
         cx.notify();
       })
-      .child(div().w(2).h(14).flex_none().rounded(1).bg(selected ? colors.accent : TRANSPARENT))
-      .child(FileIcon(this.icons, file.path, { size: 15 }))
+      .when(this.view === VIEW_TREE, (el) => el.child(twistieSlot(null)))
+      .when(this.view !== VIEW_TREE, (el) => el.child(div().w(2).h(14).flex_none().rounded(1).bg(selected ? colors.accent : TRANSPARENT)))
+      .child(FileIcon(this.icons, file.path, { size: 16 }))
       .child(div().flex_shrink(1).min_w(40).max_w(200).truncate().text_color(color).when(deleted, (el) => el.line_through()).child(name))
       .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(file.conflict ? file.conflictKind : dir));
     if (hot) {
@@ -751,15 +752,16 @@ export const panelMethods = {
     }
     row.child(div().w(16).h(16).flex_none().flex().items_center().justify_center().rounded(4).bg(tint(color, "22"))
       .text_size(TEXT.tiny).font_semibold().text_color(color).child(letter));
-    return this.hoverable(row, key);
+    return this.hoverable(withTreeIndent(row, colors, { depth, height: ROW_HEIGHT, hovered: this.treeHovered }), key);
   },
 
   folderRow(colors, id, label, depth, open) {
-    return h_flex().id(`d-${id}`).h(ROW_HEIGHT).flex_none().mx(4).pl(INDENT + depth * INDENT).gap(5).items_center().rounded(5).cursor_pointer().hover((style) => style.bg(colors.hover))
-      .text_size(TEXT.small).text_color(colors.muted).on_click((_e, cx) => this.toggleGroup(id, cx))
-      .child(Icon(open ? "chevron-down" : "chevron-right", 11).text_color(colors.dim))
-      .child(FileIcon(this.icons, label.split("/").pop(), { dir: true, open, size: 15 }))
+    const row = h_flex().id(`d-${id}`).h(ROW_HEIGHT).flex_none().mx(4).gap(4).items_center().rounded(5).cursor_pointer().hover((style) => style.bg(colors.hover))
+      .text_size(TEXT.body).text_color(colors.muted).on_click((_e, cx) => this.toggleGroup(id, cx))
+      .child(twistieSlot(Icon(open ? "chevron-down" : "chevron-right", 14).text_color(colors.dim)))
+      .child(FileIcon(this.icons, label.split("/").pop(), { dir: true, open, size: 16 }))
       .child(div().truncate().child(label));
+    return withTreeIndent(row, colors, { depth, height: ROW_HEIGHT, hovered: this.treeHovered });
   },
 
   walkTree(colors, node, scope, depth, prefix, out) {
@@ -924,7 +926,11 @@ export const panelMethods = {
     if (!this.root) {
       return panel.child(Message(this.error ?? "Pick a repo in Workspace, or focus a terminal inside one."));
     }
-    const body = v_flex().id("c-body").flex_1().min_h(0).overflow_y_scrollbar().pb(8).gap(1);
+    const body = v_flex().id("c-body").flex_1().min_h(0).overflow_y_scrollbar().pb(8).gap(1)
+      .on_hover((hovered, cx) => {
+        this.treeHovered = hovered;
+        cx.notify();
+      });
     if (this.part === HISTORY_PART) {
       return panel.child(body.children(this.renderSections(colors)));
     }
