@@ -1,8 +1,3 @@
-// vx-files: the Files panel (tree.js) and its preview tab (preview.js). One class, three roles:
-//   panel    props {}                         the tree of the context repo
-//   view     props { mode: "view", space }    the preview tab in the centre
-//   menu     props { menu }                   a right-click popup
-//   timeline props { section: "timeline" }    the side bar's Timeline section (timeline.js)
 import { View } from "gpui-kit";
 import { InputState } from "gpui-base";
 import { props, checking, nextCommand } from "herdr";
@@ -11,48 +6,80 @@ import { previewMethods } from "./preview.js";
 import { timelineMethods } from "./timeline.js";
 import { loadIcons } from "./icons.js";
 
-const FOLLOW_MS = 400;
-const REFRESH_MS = 10000;
-
 class VxFiles extends View {
+  static FOLLOW_MS = 400;
+  static REFRESH_MS = 10000;
+  static MODE_VIEW = "view";
+  static MODE_TIMELINE = "timeline";
+
   init(given, cx) {
-    const p = props() ?? given ?? {};
-    if (p.menu) {
-      this.menu = p.menu;
+    const initProps = props() ?? given ?? {};
+    if (initProps.menu) {
+      this.menu = initProps.menu;
       return;
     }
     loadIcons(this, cx);
-    if (p.section === "timeline") {
-      this.mode = "timeline";
-      if (!checking()) this.initTimeline(p, cx);
+    if (initProps.section === VxFiles.MODE_TIMELINE) {
+      this.initTimelineMode(initProps, cx);
       return;
     }
-    if (p.mode === "view") {
-      this.mode = "view";
-      if (checking()) return;
-      this.initPreview(p, cx);
-      // Keys (layout:vx-code): vx-files.save (⌘S) and vx-files.edit reach the shown preview.
-      cx.spawn(async (cx) => {
-        for (;;) {
-          const c = await nextCommand();
-          if (c === "save") this.save(cx);
-          if (c === "edit") (this.editor ? this.stopEdit(cx) : this.startEdit(cx));
-          cx.notify();
-        }
-      });
+    if (initProps.mode === VxFiles.MODE_VIEW) {
+      this.initViewMode(initProps, cx);
       return;
     }
+    this.initTreeMode(cx);
+  }
+
+  initTimelineMode(initProps, cx) {
+    this.mode = VxFiles.MODE_TIMELINE;
+    if (!checking()) {
+      this.initTimeline(initProps, cx);
+    }
+  }
+
+  initViewMode(initProps, cx) {
+    this.mode = VxFiles.MODE_VIEW;
+    if (checking()) {
+      return;
+    }
+    this.initPreview(initProps, cx);
+    cx.spawn(async (cx) => {
+      for (;;) {
+        this.handleCommand(await nextCommand(), cx);
+        cx.notify();
+      }
+    });
+  }
+
+  handleCommand(command, cx) {
+    if (command === "save") {
+      this.save(cx);
+    }
+    if (command === "edit") {
+      this.toggleEdit(cx);
+    }
+  }
+
+  initTreeMode(cx) {
     this.filterState = InputState.new({ placeholder: "Filter files" });
     this.initTree(cx);
-    if (checking()) return;
-    cx.timer.every(FOLLOW_MS, (cx) => this.followTree(cx));
-    cx.timer.every(REFRESH_MS, (cx) => this.reload(cx));
+    if (checking()) {
+      return;
+    }
+    cx.timer.every(VxFiles.FOLLOW_MS, (cx) => this.followTree(cx));
+    cx.timer.every(VxFiles.REFRESH_MS, (cx) => this.reload(cx));
   }
 
   render() {
-    if (this.menu) return this.renderMenu();
-    if (this.mode === "view") return this.renderPreview();
-    if (this.mode === "timeline") return this.renderTimeline();
+    if (this.menu) {
+      return this.renderMenu();
+    }
+    if (this.mode === VxFiles.MODE_VIEW) {
+      return this.renderPreview();
+    }
+    if (this.mode === VxFiles.MODE_TIMELINE) {
+      return this.renderTimeline();
+    }
     return this.renderTree();
   }
 }

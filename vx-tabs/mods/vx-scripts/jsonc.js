@@ -1,48 +1,66 @@
 // JSON with comments and trailing commas (VS Code's .code-workspace, settings.json).
-// Pure: no Herdr calls, so tests run it under node.
 
-// Drops // and /* */ comments outside strings, then commas that close an object or array.
-export function stripJsonc(text) {
-  const src = String(text ?? "");
+function stringEnd(text, openQuote) {
+  let index = openQuote + 1;
+  while (index < text.length && text[index] !== '"') {
+    index += text[index] === "\\" ? 2 : 1;
+  }
+  return index;
+}
+
+function stripComments(src) {
   let out = "";
   let i = 0;
   while (i < src.length) {
-    const c = src[i];
-    if (c === '"') {
-      let j = i + 1;
-      while (j < src.length && src[j] !== '"') j += src[j] === "\\" ? 2 : 1;
-      out += src.slice(i, j + 1);
-      i = j + 1;
-    } else if (c === "/" && src[i + 1] === "/") {
-      while (i < src.length && src[i] !== "\n") i++;
-    } else if (c === "/" && src[i + 1] === "*") {
+    const char = src[i];
+    const next = src[i + 1];
+    if (char === '"') {
+      const end = stringEnd(src, i);
+      out += src.slice(i, end + 1);
+      i = end + 1;
+    } else if (char === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") {
+        i++;
+      }
+    } else if (char === "/" && next === "*") {
       const end = src.indexOf("*/", i + 2);
       i = end < 0 ? src.length : end + 2;
     } else {
-      out += c;
+      out += char;
       i++;
     }
   }
-  // A comma followed only by whitespace before } or ] (strings are already passed through
-  // whole above, but this runs on the joined text, so skip over strings again).
+  return out;
+}
+
+function closesContainer(text, commaAt) {
+  let index = commaAt + 1;
+  while (index < text.length && /\s/.test(text[index])) {
+    index++;
+  }
+  return text[index] === "}" || text[index] === "]";
+}
+
+function stripTrailingCommas(text) {
   let clean = "";
-  for (let k = 0; k < out.length; k++) {
-    const c = out[k];
-    if (c === '"') {
-      let j = k + 1;
-      while (j < out.length && out[j] !== '"') j += out[j] === "\\" ? 2 : 1;
-      clean += out.slice(k, j + 1);
-      k = j;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      const end = stringEnd(text, i);
+      clean += text.slice(i, end + 1);
+      i = end;
       continue;
     }
-    if (c === ",") {
-      let j = k + 1;
-      while (j < out.length && /\s/.test(out[j])) j++;
-      if (out[j] === "}" || out[j] === "]") continue;
+    if (char === "," && closesContainer(text, i)) {
+      continue;
     }
-    clean += c;
+    clean += char;
   }
   return clean;
+}
+
+export function stripJsonc(text) {
+  return stripTrailingCommas(stripComments(String(text ?? "")));
 }
 
 export function parseJsonc(text) {

@@ -1,39 +1,60 @@
-// Things that change something (git push, CI retry, a commit) never run on one click: the mod
-// opens itself as a dialog with props { confirm: spec }, the dialog shows what will run, and
-// runs it itself before closing (closing a copy first could drop the exec in flight).
-//   spec = { title, detail, label, danger, action: { cmd, args, cwd, on, timeout, doing, done, root } }
-//   action.steps = [{ cmd, args, cwd? }] runs several commands in order, stopping at the first
-//   that fails (e.g. git pull --rebase, then git push).
+// A change never runs on one click: the mod reopens itself as a dialog with props { confirm: spec }
+// and runs the action from there, since closing a copy first could drop the exec in flight.
 import { openOverlay, closeOverlay, exec, notify, props } from "herdr";
 import { bump } from "./ws.js";
 
+const DIALOG_WIDTH = 440;
+const DIALOG_HEIGHT = 150;
+const DIALOG_DETAIL_HEIGHT = 196;
+const STEP_ROW_HEIGHT = 26;
+const ACTION_TIMEOUT_MS = 120000;
+const SUCCESS_TOAST_MS = 3000;
+const ERROR_TOAST_MS = 8000;
+const ERROR_TAIL_CHARS = 600;
+
 export function askConfirm(mod, spec) {
-  const extra = Math.max(0, (spec.action.steps?.length ?? 1) - 1) * 26;
-  openOverlay({ mod, kind: "dialog", width: 440, height: (spec.detail ? 196 : 150) + extra, props: { confirm: spec } });
+  const extraSteps = Math.max(0, (spec.action.steps?.length ?? 1) - 1);
+  const height = (spec.detail ? DIALOG_DETAIL_HEIGHT : DIALOG_HEIGHT) + extraSteps * STEP_ROW_HEIGHT;
+  openOverlay({ mod, kind: "dialog", width: DIALOG_WIDTH, height, props: { confirm: spec } });
 }
 
-export async function runAction(a) {
-  let r = null;
-  for (const s of a.steps ?? [a]) {
-    r = await exec(s.cmd, s.args, { cwd: s.cwd ?? a.cwd, on: a.on ?? null, timeout: a.timeout ?? 120000 }).catch((e) => ({
-      code: -1, stdout: "", stderr: String(e?.message ?? e),
-    }));
-    if (r.code !== 0) break;
+function runStep(action, step) {
+  return exec(step.cmd, step.args, { cwd: step.cwd ?? action.cwd, on: action.on ?? null, timeout: action.timeout ?? ACTION_TIMEOUT_MS })
+    .catch((error) => ({ code: -1, stdout: "", stderr: String(error?.message ?? error) }));
+}
+
+function notifyResult(action, result) {
+  const text = (result.stderr || result.stdout || "").trim();
+  if (result.code === 0) {
+    notify({ title: action.done ?? "Done", body: text.split("\n").pop() || undefined, level: "success", timeout: SUCCESS_TOAST_MS });
+    return;
   }
-  const text = (r.stderr || r.stdout || "").trim();
-  if (r.code === 0) notify({ title: a.done ?? "Done", body: text.split("\n").pop() || undefined, level: "success", timeout: 3000 });
-  else notify({ title: `${a.doing ?? "It"} failed`, body: text.slice(-600) || `exit ${r.code}`, level: "error", timeout: 8000 });
-  if (a.root !== undefined) bump(a.root);
-  return r;
+  notify({ title: `${action.doing ?? "It"} failed`, body: text.slice(-ERROR_TAIL_CHARS) || `exit ${result.code}`, level: "error", timeout: ERROR_TOAST_MS });
 }
 
-// The dialog's own behaviour, for a mod whose copy was opened with props().confirm.
+export async function runAction(action) {
+  let result = null;
+  for (const step of action.steps ?? [action]) {
+    result = await runStep(action, step);
+    if (result.code !== 0) {
+      break;
+    }
+  }
+  notifyResult(action, result);
+  if (action.root !== undefined) {
+    bump(action.root);
+  }
+  return result;
+}
+
 export const confirmMethods = {
   isConfirm() {
     return Boolean(this.confirmSpec);
   },
   async confirmYes(cx) {
-    if (this.confirmBusy) return;
+    if (this.confirmBusy) {
+      return;
+    }
     this.confirmBusy = true;
     cx.notify();
     try {

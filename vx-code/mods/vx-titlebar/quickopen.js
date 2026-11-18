@@ -1,14 +1,3 @@
-// Quick Open (⌘P), VS Code's: a popup over the command center. One box, modes by prefix:
-//   (none)   files of every workspace root, fuzzy, matched letters highlighted; "recently opened"
-//            first, then "file results". `name:42` opens at line 42.
-//   :        go to a line of the file in the active tab        @   go to a symbol in it
-//   >        Herdr's and vx's commands with their keys          %   search text in every root
-//   ?        what the prefixes do
-// ↑↓ (wrapping), PageUp / PageDown, Enter opens, ⌘Enter opens to the side, Esc closes. The
-// selected row offers Open to the Side and, for a recent file, Remove from Recently Opened.
-// Speed: rows are worked out when the query or the data changes (never while drawing), files are
-// ranked in slices between frames, and only the 18 visible rows are drawn: a window this view
-// scrolls itself (a virtual list's rows can't carry click / hover handlers, which these need).
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { theme, run, closeOverlay, props, shared, setShared, spaces, readTextFile, commands, keys, window } from "herdr";
@@ -17,7 +6,7 @@ import { showInViewer } from "./tabs.js";
 import { describeTab } from "./kinds.js";
 import { rankFiles, matchPath, runsOf, parseQuery, symbolsOf, commandLabel, keyLabel, actionToRun, prepareFiles, scoreSlice, topFiles, queryWords } from "./quickopen-core.js";
 import { grepArgs, parseGrep, matchSnippet } from "./search-core.js";
-import { TEXT, Icon, FileIcon, tint } from "./ui.js";
+import { Icon, FileIcon, tint } from "./ui.js";
 
 export const QO_ROW = 24;
 export const QO_ROWS = 18;
@@ -25,8 +14,20 @@ export const QO_HEAD = 38;
 const RECENT_KEY = "vx.goto.recent";
 const CMD_RECENT_KEY = "vx.cmd.recent";
 const PLACEHOLDER = "Search files by name (append : to go to line or @ to go to symbol)";
+const SLICE = 2500;
+const MAX_FILE_HITS = 200;
+const MAX_TEXT_HITS = 200;
+const MAX_COMMANDS = 300;
+const MAX_RECENT_FILES = 50;
+const MAX_RECENT_HITS = 20;
+const MAX_RECENT_COMMANDS = 12;
+const TEXT_SEARCH_DELAY_MS = 250;
+const TEXT_SEARCH_TIMEOUT_MS = 15000;
+const SNIPPET = { before: 20, width: 90 };
+const KEY_SECTIONS = ["layout:vx-code", "global"];
+const MIN_THUMB_HEIGHT = 18;
 
-// vx's own commands (mods' commands aren't in commands()).
+// vx's own commands: mods' commands aren't in commands().
 const VX_COMMANDS = [
   ["vx-titlebar.goto", "Go to File…"],
   ["vx-activity.explorer", "View: Show Explorer"],
@@ -61,12 +62,16 @@ const SYMBOL_LOOK = {
   class: ["◆", "ansi3"], interface: ["◇", "ansi4"], enum: ["E", "ansi3"], type: ["T", "ansi4"],
   function: ["ƒ", "ansi5"], method: ["ƒ", "ansi5"], variable: ["x", "ansi6"], heading: ["#", "muted"],
 };
+const DEFAULT_SYMBOL_LOOK = ["•", "muted"];
 
 const sameFile = (a, b) => a.root.path === b.root.path && a.rel === b.rel;
-const SLICE = 2500;
+const plain = (text) => [{ text, hit: false }];
+const note = (text, desc = []) => [{ kind: "note", key: "n", label: plain(text), desc }];
+const isFileMode = (kind) => kind === "preview" || kind === "diff";
+const withoutFile = (list, file) => list.filter((entry) => !(entry?.root?.path === file.root.path && entry.rel === file.rel));
 
 export const quickMethods = {
-  initQuick(p, cx) {
+  initQuick(options, cx) {
     this.quick = true;
     this.files = null;
     this.cursor = 0;
@@ -80,7 +85,7 @@ export const quickMethods = {
     this.fileHits = null;
     this.rowsCache = [];
     this.query = InputState.new({ placeholder: PLACEHOLDER });
-    const start = p.goto?.query ?? "";
+    const start = options.goto?.query ?? "";
     if (start) {
       this.query.set_value(start);
       this.query.set_selected_range({ start: start.length, end: start.length });
@@ -94,10 +99,12 @@ export const quickMethods = {
   },
 
   roots() {
-    const ws = workspace()?.roots ?? [];
-    if (ws.length) return ws;
-    const c = ctx();
-    return c.cwd ? [{ name: baseName(c.cwd), path: c.cwd }] : [];
+    const roots = workspace()?.roots ?? [];
+    if (roots.length) {
+      return roots;
+    }
+    const context = ctx();
+    return context.cwd ? [{ name: baseName(context.cwd), path: context.cwd }] : [];
   },
 
   loadFiles(cx) {
@@ -117,29 +124,44 @@ export const quickMethods = {
   currentFile() {
     const space = spaces().find((s) => s.active);
     const tab = space?.tabs?.find((t) => t.active);
-    if (!tab) return null;
-    const d = describeTab(tab, space.id);
-    const rel = d.value?.rel ?? d.value?.path;
-    if ((d.kind !== "preview" && d.kind !== "diff") || !d.value?.root || !rel) return null;
-    const root = rootFor(d.value.root, workspace()?.roots) ?? { name: baseName(d.value.root), path: d.value.root };
-    return { root, rel, on: d.value.on ?? null };
+    if (!tab) {
+      return null;
+    }
+    const described = describeTab(tab, space.id);
+    const value = described.value;
+    const rel = value?.rel ?? value?.path;
+    if (!isFileMode(described.kind) || !value?.root || !rel) {
+      return null;
+    }
+    const root = rootFor(value.root, workspace()?.roots) ?? { name: baseName(value.root), path: value.root };
+    return { root, rel, on: value.on ?? null };
   },
 
-  // The query or the data changed: work the rows out again (files are ranked in slices).
   changed(cx, keepCursor = false) {
-    if (!keepCursor) this.cursor = 0;
-    const q = parseQuery(this.query.value());
-    if ((q.mode === "symbols" || q.mode === "line") && this.current && this.currentText === undefined) {
-      this.currentText = null;
-      const f = this.current;
-      cx.spawn(async (cx) => {
-        this.currentText = (await readTextFile(`${f.root.path}/${f.rel}`, { on: f.on }).catch(() => null)) ?? "";
-        this.refresh(cx);
-      });
+    if (!keepCursor) {
+      this.cursor = 0;
     }
-    if (q.mode === "text") this.searchText(q.text, cx);
-    if (q.mode === "files" && q.text && this.prepared) this.rankAsync(q.text, cx);
+    const query = parseQuery(this.query.value());
+    const needsText = query.mode === "symbols" || query.mode === "line";
+    if (needsText && this.current && this.currentText === undefined) {
+      this.loadCurrentText(cx);
+    }
+    if (query.mode === "text") {
+      this.searchText(query.text, cx);
+    }
+    if (query.mode === "files" && query.text && this.prepared) {
+      this.rankAsync(query.text, cx);
+    }
     this.refresh(cx);
+  },
+
+  loadCurrentText(cx) {
+    this.currentText = null;
+    const file = this.current;
+    cx.spawn(async (cx) => {
+      this.currentText = (await readTextFile(`${file.root.path}/${file.rel}`, { on: file.on }).catch(() => null)) ?? "";
+      this.refresh(cx);
+    });
   },
 
   refresh(cx) {
@@ -151,37 +173,50 @@ export const quickMethods = {
 
   // Keep the selected row inside the drawn window.
   reveal() {
-    const n = this.rowsCache.length;
-    if (this.cursor < this.top) this.top = this.cursor;
-    if (this.cursor >= this.top + QO_ROWS) this.top = this.cursor - QO_ROWS + 1;
-    this.top = Math.max(0, Math.min(this.top, Math.max(0, n - QO_ROWS)));
+    const count = this.rowsCache.length;
+    if (this.cursor < this.top) {
+      this.top = this.cursor;
+    }
+    if (this.cursor >= this.top + QO_ROWS) {
+      this.top = this.cursor - QO_ROWS + 1;
+    }
+    this.top = Math.max(0, Math.min(this.top, Math.max(0, count - QO_ROWS)));
   },
 
-  scrollBy(e, cx) {
-    const n = this.rowsCache.length;
-    if (n <= QO_ROWS) return;
-    this.wheel += e.delta_lines ? e.delta_lines.y * QO_ROW : e.delta?.y ?? 0;
+  scrollBy(event, cx) {
+    const count = this.rowsCache.length;
+    if (count <= QO_ROWS) {
+      return;
+    }
+    this.wheel += event.delta_lines ? event.delta_lines.y * QO_ROW : event.delta?.y ?? 0;
     let moved = false;
     while (Math.abs(this.wheel) >= QO_ROW) {
       this.top -= Math.sign(this.wheel);
       this.wheel -= Math.sign(this.wheel) * QO_ROW;
       moved = true;
     }
-    this.top = Math.max(0, Math.min(this.top, n - QO_ROWS));
-    if (moved) cx.notify();
+    this.top = Math.max(0, Math.min(this.top, count - QO_ROWS));
+    if (moved) {
+      cx.notify();
+    }
   },
 
+  // Ranks in slices between frames so typing stays responsive on large repos.
   rankAsync(text, cx) {
     const gen = ++this.rankGen;
     const prepared = this.prepared;
     const words = queryWords(text);
     const scored = [];
     const step = (from, cx) => {
-      if (gen !== this.rankGen) return;
+      if (gen !== this.rankGen) {
+        return;
+      }
       const to = Math.min(from + SLICE, prepared.length);
       scoreSlice(prepared, words, from, to, scored);
-      if (to < prepared.length) return void cx.timer.after(0, (cx) => step(to, cx));
-      this.fileHits = { text, list: topFiles(prepared, scored, text, 200) };
+      if (to < prepared.length) {
+        return void cx.timer.after(0, (cx) => step(to, cx));
+      }
+      this.fileHits = { text, list: topFiles(prepared, scored, text, MAX_FILE_HITS) };
       this.refresh(cx);
     };
     step(0, cx);
@@ -194,113 +229,193 @@ export const quickMethods = {
       return;
     }
     this.textHits = null;
-    cx.timer.after(250, (cx) => {
-      if (gen !== this.textGen) return;
+    cx.timer.after(TEXT_SEARCH_DELAY_MS, (cx) => {
+      if (gen !== this.textGen) {
+        return;
+      }
       cx.spawn(async (cx) => {
-        const args = grepArgs(text, {});
-        const groups = await Promise.all(this.roots().map(async (root) => {
-          const r = await git(args, { cwd: root.path, timeout: 15000 }).catch(() => null);
-          return { root, ...parseGrep(r?.code === 0 ? r.stdout : "", { maxMatches: 200 }) };
-        }));
-        if (gen !== this.textGen) return;
-        this.textHits = groups.flatMap((g) => g.files.flatMap((f) => f.matches.map((m) => ({ root: g.root, rel: f.rel, ...m })))).slice(0, 200);
+        const hits = await this.grepRoots(text);
+        if (gen !== this.textGen) {
+          return;
+        }
+        this.textHits = hits;
         this.refresh(cx);
       });
     });
   },
 
+  async grepRoots(text) {
+    const args = grepArgs(text, {});
+    const groups = await Promise.all(this.roots().map(async (root) => {
+      const result = await git(args, { cwd: root.path, timeout: TEXT_SEARCH_TIMEOUT_MS }).catch(() => null);
+      return { root, ...parseGrep(result?.code === 0 ? result.stdout : "", { maxMatches: MAX_TEXT_HITS }) };
+    }));
+    return groups
+      .flatMap((group) => group.files.flatMap((file) => file.matches.map((match) => ({ root: group.root, rel: file.rel, ...match }))))
+      .slice(0, MAX_TEXT_HITS);
+  },
+
   recentFiles() {
-    const live = new Set(this.roots().map((r) => r.path));
-    return (shared(RECENT_KEY) ?? []).filter((r) => r?.root?.path && r.rel && (live.size === 0 || live.has(r.root.path)))
-      .map((r) => ({ root: rootFor(r.root.path, workspace()?.roots) ?? r.root, rel: r.rel }));
+    const live = new Set(this.roots().map((root) => root.path));
+    return (shared(RECENT_KEY) ?? []).filter((entry) => entry?.root?.path && entry.rel && (live.size === 0 || live.has(entry.root.path)))
+      .map((entry) => ({ root: rootFor(entry.root.path, workspace()?.roots) ?? entry.root, rel: entry.rel }));
   },
 
   // The rows for the current query: { kind, group?, label runs, description runs, icon, … }.
   rows() {
-    const q = parseQuery(this.query.value());
-    const t = theme();
-    const multi = this.roots().length > 1;
-    const fileRow = (it, group, at = []) => {
-      const name = baseName(it.rel);
-      const cut = it.rel.length - name.length;
-      const dir = cut > 0 ? it.rel.slice(0, cut - 1) : "";
-      return {
-        kind: "file", key: `f:${it.root.path}:${it.rel}`, file: it, group, line: q.line ?? null,
-        icon: { file: it.rel }, label: runsOf(name, at, cut),
-        desc: [...(multi ? [{ text: it.root.name, hit: false }] : []), ...(multi && dir ? [{ text: " • ", hit: false }] : []), ...runsOf(dir, at, 0)],
-      };
+    const query = parseQuery(this.query.value());
+    const builders = {
+      help: () => this.helpRows(),
+      commands: () => this.commandRows(query),
+      line: () => this.lineRows(query),
+      symbols: () => this.symbolRows(query),
+      text: () => this.textRows(query),
     };
-    if (q.mode === "help") {
-      return HELP.map(([prefix, what]) => ({ kind: "help", key: `h:${prefix}`, prefix, icon: { glyph: prefix || "…", color: "accent" }, label: [{ text: what, hit: false }], desc: [] }));
+    return (builders[query.mode] ?? (() => this.fileRows(query)))();
+  },
+
+  fileRow(item, group, at, line) {
+    const multi = this.roots().length > 1;
+    const name = baseName(item.rel);
+    const cut = item.rel.length - name.length;
+    const dir = cut > 0 ? item.rel.slice(0, cut - 1) : "";
+    return {
+      kind: "file", key: `f:${item.root.path}:${item.rel}`, file: item, group, line: line ?? null,
+      icon: { file: item.rel }, label: runsOf(name, at, cut),
+      desc: [...(multi ? [{ text: item.root.name, hit: false }] : []), ...(multi && dir ? [{ text: " • ", hit: false }] : []), ...runsOf(dir, at, 0)],
+    };
+  },
+
+  helpRows() {
+    return HELP.map(([prefix, what]) => ({ kind: "help", key: `h:${prefix}`, prefix, icon: { glyph: prefix || "…", color: "accent" }, label: plain(what), desc: [] }));
+  },
+
+  commandItems(list, bound) {
+    const items = new Map();
+    for (const [action, label] of VX_COMMANDS) {
+      items.set(action, { action, label });
     }
-    if (q.mode === "commands") {
-      const list = commands() ?? [];
-      const bound = keys() ?? [];
-      const keyFor = (action) => bound.find((k) => k.action === action && (k.section === "layout:vx-code" || k.section === "global"))?.keys ?? null;
-      const items = new Map();
-      for (const [action, label] of VX_COMMANDS) items.set(action, { action, label });
-      for (const c of list) if (!c.args.some((a) => a.required)) items.set(c.name, { action: c.name, label: commandLabel(c.name), about: c.about });
-      for (const k of bound) if (k.action.includes(":") && !items.has(k.action) && actionToRun(k.action, list)) items.set(k.action, { action: k.action, label: commandLabel(k.action) });
-      const recent = (shared(CMD_RECENT_KEY) ?? []).filter((a) => items.has(a));
-      const all = [...items.values()];
-      const scored = q.text
-        ? all.map((c) => ({ c, m: matchPath(c.label, q.text) })).filter((x) => x.m).sort((a, b) => b.m.score - a.m.score)
-        : [...recent.map((a) => items.get(a)).filter(Boolean).map((c) => ({ c, m: null })), ...all.filter((c) => !recent.includes(c.action)).sort((a, b) => a.label.localeCompare(b.label)).map((c) => ({ c, m: null }))];
-      return scored.slice(0, 300).map(({ c, m }, i) => ({
-        kind: "command", key: `c:${c.action}`, action: c.action,
-        group: q.text || !recent.length ? null : i === 0 ? "recently used" : i === recent.length ? "other commands" : null,
-        label: runsOf(c.label, m?.at ?? []), desc: [], tip: c.about, keys: keyFor(c.action),
-      }));
+    for (const command of list) {
+      if (!command.args.some((arg) => arg.required)) {
+        items.set(command.name, { action: command.name, label: commandLabel(command.name), about: command.about });
+      }
     }
-    if (q.mode === "line") {
-      const f = this.current;
-      if (!f) return [{ kind: "note", key: "n", label: [{ text: "Open a file in the editor first, then go to a line.", hit: false }], desc: [] }];
-      const n = this.currentText ? this.currentText.split("\n").length : null;
-      if (!q.line) return [{ kind: "note", key: "n", label: [{ text: `Type a line number${n ? ` between 1 and ${n}` : ""} to navigate to.`, hit: false }], desc: [{ text: f.rel, hit: false }] }];
-      const line = n ? Math.min(q.line, n) : q.line;
-      return [{ kind: "line", key: "l", file: f, line, icon: { ui: "arrow-down" }, label: [{ text: `Go to line ${line}${q.col ? `, character ${q.col}` : ""}.`, hit: false }], desc: [{ text: baseName(f.rel), hit: false }] }];
+    for (const binding of bound) {
+      if (binding.action.includes(":") && !items.has(binding.action) && actionToRun(binding.action, list)) {
+        items.set(binding.action, { action: binding.action, label: commandLabel(binding.action) });
+      }
     }
-    if (q.mode === "symbols") {
-      const f = this.current;
-      if (!f) return [{ kind: "note", key: "n", label: [{ text: "Open a file in the editor first, then go to a symbol.", hit: false }], desc: [] }];
-      if (this.currentText === null || this.currentText === undefined) return [{ kind: "note", key: "n", label: [{ text: "Reading symbols…", hit: false }], desc: [] }];
-      const syms = symbolsOf(this.currentText);
-      const hits = q.text ? syms.map((s) => ({ s, m: matchPath(s.name, q.text) })).filter((x) => x.m).sort((a, b) => b.m.score - a.m.score) : syms.map((s) => ({ s, m: null }));
-      if (!hits.length) return [{ kind: "note", key: "n", label: [{ text: syms.length ? "No matching symbols." : "No symbols found in this file.", hit: false }], desc: [] }];
-      return hits.map(({ s, m }, i) => {
-        const [glyph, color] = SYMBOL_LOOK[s.kind] ?? ["•", "muted"];
-        return { kind: "line", key: `s:${s.line}:${s.name}`, file: f, line: s.line, group: i === 0 ? `symbols (${hits.length})` : null,
-          icon: { glyph, color },
-          label: runsOf(s.name, m?.at ?? []), desc: [{ text: s.kind, hit: false }], right: `Ln ${s.line}` };
-      });
+    return items;
+  },
+
+  commandRows(query) {
+    const list = commands() ?? [];
+    const bound = keys() ?? [];
+    const keyFor = (action) => bound.find((binding) => binding.action === action && KEY_SECTIONS.includes(binding.section))?.keys ?? null;
+    const items = this.commandItems(list, bound);
+    const recent = (shared(CMD_RECENT_KEY) ?? []).filter((action) => items.has(action));
+    const all = [...items.values()];
+    const scored = query.text
+      ? all.map((command) => ({ command, match: matchPath(command.label, query.text) })).filter((entry) => entry.match).sort((a, b) => b.match.score - a.match.score)
+      : [
+        ...recent.map((action) => items.get(action)).filter(Boolean).map((command) => ({ command, match: null })),
+        ...all.filter((command) => !recent.includes(command.action)).sort((a, b) => a.label.localeCompare(b.label)).map((command) => ({ command, match: null })),
+      ];
+    const groupAt = (index) => {
+      if (query.text || !recent.length) {
+        return null;
+      }
+      if (index === 0) {
+        return "recently used";
+      }
+      return index === recent.length ? "other commands" : null;
+    };
+    return scored.slice(0, MAX_COMMANDS).map(({ command, match }, index) => ({
+      kind: "command", key: `c:${command.action}`, action: command.action, group: groupAt(index),
+      label: runsOf(command.label, match?.at ?? []), desc: [], tip: command.about, keys: keyFor(command.action),
+    }));
+  },
+
+  lineRows(query) {
+    const file = this.current;
+    if (!file) {
+      return note("Open a file in the editor first, then go to a line.");
     }
-    if (q.mode === "text") {
-      if (!q.text) return [{ kind: "note", key: "n", label: [{ text: "Type to search for text in every repo of the workspace.", hit: false }], desc: [] }];
-      if (!this.textHits) return [{ kind: "note", key: "n", label: [{ text: "Searching…", hit: false }], desc: [] }];
-      if (!this.textHits.length) return [{ kind: "note", key: "n", label: [{ text: "No results found.", hit: false }], desc: [] }];
-      return this.textHits.map((h, i) => {
-        const sn = matchSnippet(h.text, h.col, q.text.length, { before: 20, width: 90 });
-        return { kind: "file", key: `t:${h.root.path}:${h.rel}:${h.line}:${h.col}`, file: { root: h.root, rel: h.rel }, line: h.line,
-          group: i === 0 ? "text results" : null, icon: { file: h.rel },
-          label: [{ text: sn.head, hit: false }, { text: sn.hit, hit: true }, { text: sn.tail, hit: false }],
-          desc: [{ text: `${multi ? `${h.root.name} • ` : ""}${h.rel}:${h.line}`, hit: false }] };
-      });
+    const lineCount = this.currentText ? this.currentText.split("\n").length : null;
+    if (!query.line) {
+      return note(`Type a line number${lineCount ? ` between 1 and ${lineCount}` : ""} to navigate to.`, plain(file.rel));
     }
-    // Files.
+    const line = lineCount ? Math.min(query.line, lineCount) : query.line;
+    const label = `Go to line ${line}${query.col ? `, character ${query.col}` : ""}.`;
+    return [{ kind: "line", key: "l", file, line, icon: { ui: "arrow-down" }, label: plain(label), desc: plain(baseName(file.rel)) }];
+  },
+
+  symbolRows(query) {
+    const file = this.current;
+    if (!file) {
+      return note("Open a file in the editor first, then go to a symbol.");
+    }
+    if (this.currentText === null || this.currentText === undefined) {
+      return note("Reading symbols…");
+    }
+    const symbols = symbolsOf(this.currentText);
+    const hits = query.text
+      ? symbols.map((symbol) => ({ symbol, match: matchPath(symbol.name, query.text) })).filter((entry) => entry.match).sort((a, b) => b.match.score - a.match.score)
+      : symbols.map((symbol) => ({ symbol, match: null }));
+    if (!hits.length) {
+      return note(symbols.length ? "No matching symbols." : "No symbols found in this file.");
+    }
+    return hits.map(({ symbol, match }, index) => {
+      const [glyph, color] = SYMBOL_LOOK[symbol.kind] ?? DEFAULT_SYMBOL_LOOK;
+      return {
+        kind: "line", key: `s:${symbol.line}:${symbol.name}`, file, line: symbol.line, group: index === 0 ? `symbols (${hits.length})` : null,
+        icon: { glyph, color }, label: runsOf(symbol.name, match?.at ?? []), desc: plain(symbol.kind), right: `Ln ${symbol.line}`,
+      };
+    });
+  },
+
+  textRows(query) {
+    if (!query.text) {
+      return note("Type to search for text in every repo of the workspace.");
+    }
+    if (!this.textHits) {
+      return note("Searching…");
+    }
+    if (!this.textHits.length) {
+      return note("No results found.");
+    }
+    const multi = this.roots().length > 1;
+    return this.textHits.map((hit, index) => {
+      const snippet = matchSnippet(hit.text, hit.col, query.text.length, SNIPPET);
+      return {
+        kind: "file", key: `t:${hit.root.path}:${hit.rel}:${hit.line}:${hit.col}`, file: { root: hit.root, rel: hit.rel }, line: hit.line,
+        group: index === 0 ? "text results" : null, icon: { file: hit.rel },
+        label: [{ text: snippet.head, hit: false }, { text: snippet.hit, hit: true }, { text: snippet.tail, hit: false }],
+        desc: plain(`${multi ? `${hit.root.name} • ` : ""}${hit.rel}:${hit.line}`),
+      };
+    });
+  },
+
+  fileRows(query) {
     const recent = this.recentFiles();
-    if (!q.text) {
-      if (!recent.length) return [{ kind: "note", key: "n", label: [{ text: "No recently opened files. Type to search every repo, or ? for help.", hit: false }], desc: [] }];
-      return recent.slice(0, 50).map((it, i) => ({ ...fileRow(it, i === 0 ? "recently opened" : null), recent: true }));
+    if (!query.text) {
+      if (!recent.length) {
+        return note("No recently opened files. Type to search every repo, or ? for help.");
+      }
+      return recent.slice(0, MAX_RECENT_FILES)
+        .map((item, index) => ({ ...this.fileRow(item, index === 0 ? "recently opened" : null, [], query.line), recent: true }));
     }
-    const recentHits = rankFiles(recent, q.text, 20);
-    // The last finished ranking (the one for an older query stays up until the new one lands).
-    const all = (this.fileHits?.list ?? []).filter((it) => !recentHits.some((r) => sameFile(r, it)));
+    const recentHits = rankFiles(recent, query.text, MAX_RECENT_HITS);
+    // The last finished ranking stays up until the one for the new query lands.
+    const others = (this.fileHits?.list ?? []).filter((item) => !recentHits.some((hit) => sameFile(hit, item)));
     const out = [
-      ...recentHits.map((it, i) => ({ ...fileRow(it, i === 0 ? "recently opened" : null, it.at), recent: true })),
-      ...all.map((it, i) => fileRow(it, i === 0 ? "file results" : null, it.at)),
+      ...recentHits.map((item, index) => ({ ...this.fileRow(item, index === 0 ? "recently opened" : null, item.at, query.line), recent: true })),
+      ...others.map((item, index) => this.fileRow(item, index === 0 ? "file results" : null, item.at, query.line)),
     ];
-    const ranking = !this.prepared || this.fileHits?.text !== q.text;
-    if (!out.length) return [{ kind: "note", key: "n", label: [{ text: ranking ? "Searching…" : "No matching results", hit: false }], desc: [] }];
+    const ranking = !this.prepared || this.fileHits?.text !== query.text;
+    if (!out.length) {
+      return note(ranking ? "Searching…" : "No matching results");
+    }
     return out;
   },
 
@@ -309,28 +424,35 @@ export const quickMethods = {
   },
 
   remember(file) {
-    const rest = (shared(RECENT_KEY) ?? []).filter((r) => !(r?.root?.path === file.root.path && r.rel === file.rel));
-    setShared(RECENT_KEY, [{ root: { name: file.root.name, path: file.root.path }, rel: file.rel }, ...rest].slice(0, 50));
+    const rest = withoutFile(shared(RECENT_KEY) ?? [], file);
+    setShared(RECENT_KEY, [{ root: { name: file.root.name, path: file.root.path }, rel: file.rel }, ...rest].slice(0, MAX_RECENT_FILES));
   },
 
   forget(file, cx) {
-    setShared(RECENT_KEY, (shared(RECENT_KEY) ?? []).filter((r) => !(r?.root?.path === file.root.path && r.rel === file.rel)));
+    setShared(RECENT_KEY, withoutFile(shared(RECENT_KEY) ?? [], file));
     this.refresh(cx);
   },
 
   openFile(file, line, side) {
     this.remember(file);
     const value = { root: file.root.path, on: file.on ?? null, rel: file.rel, ...(line ? { line } : {}) };
-    if (side) {
-      const space = spaces().find((s) => s.active);
-      run("pane.split", { direction: "right", mod: "vx-files", props: { mode: "view", space: space?.id, fixed: true, file: { root: value.root, on: value.on, rel: value.rel }, ...(line ? { line } : {}) } });
-    } else showInViewer("vx-files", value, baseName(file.rel));
+    if (!side) {
+      showInViewer("vx-files", value, baseName(file.rel));
+      return;
+    }
+    const space = spaces().find((s) => s.active);
+    run("pane.split", {
+      direction: "right", mod: "vx-files",
+      props: { mode: "view", space: space?.id, fixed: true, file: { root: value.root, on: value.on, rel: value.rel }, ...(line ? { line } : {}) },
+    });
   },
 
-  choose(i, cx, side = false) {
+  choose(index, cx, side = false) {
     const rows = this.rowsCache;
-    const row = rows[Math.min(i, rows.length - 1)];
-    if (!row || row.kind === "note") return;
+    const row = rows[Math.min(index, rows.length - 1)];
+    if (!row || row.kind === "note") {
+      return;
+    }
     if (row.kind === "help") {
       this.query.set_value(row.prefix);
       this.query.set_selected_range({ start: row.prefix.length, end: row.prefix.length });
@@ -338,50 +460,55 @@ export const quickMethods = {
       return;
     }
     this.close();
-    if (row.kind === "file" || row.kind === "line") return this.openFile(row.file, row.line, side);
-    if (row.kind === "command") {
-      setShared(CMD_RECENT_KEY, [row.action, ...(shared(CMD_RECENT_KEY) ?? []).filter((a) => a !== row.action)].slice(0, 12));
-      const r = actionToRun(row.action, commands() ?? []);
-      if (r) run(r.name, r.args);
+    if (row.kind === "file" || row.kind === "line") {
+      return this.openFile(row.file, row.line, side);
+    }
+    if (row.kind !== "command") {
+      return;
+    }
+    setShared(CMD_RECENT_KEY, [row.action, ...(shared(CMD_RECENT_KEY) ?? []).filter((action) => action !== row.action)].slice(0, MAX_RECENT_COMMANDS));
+    const target = actionToRun(row.action, commands() ?? []);
+    if (target) {
+      run(target.name, target.args);
     }
   },
 
   move(to, count, cx) {
-    if (!count) return;
+    if (!count) {
+      return;
+    }
     this.cursor = ((to % count) + count) % count;
     this.reveal();
     cx.notify();
   },
 
-  // Rows are cached, and elements are single-use: rows keep a description, drawing makes the element.
+  // Rows are cached and elements are single-use, so rows keep a description and drawing makes the element.
   iconEl(t, icon) {
-    if (icon.file) return FileIcon(this.icons, icon.file, { size: 16 });
-    if (icon.ui) return Icon(icon.ui, 14).text_color(t.dim);
+    if (icon.file) {
+      return FileIcon(this.icons, icon.file, { size: 16 });
+    }
+    if (icon.ui) {
+      return Icon(icon.ui, 14).text_color(t.dim);
+    }
     return div().text_color(t[icon.color] ?? t.muted).font_medium().child(icon.glyph);
   },
 
-  drawRow(t, row, i, cur, mac) {
+  drawRow(t, row, index, cur, mac) {
     const runsEl = (runs, base, size) => h_flex().flex_none().min_w(0).overflow_hidden().whitespace_nowrap().text_size(size)
-      .children(runs.filter((r) => r.text).map((r) => div().flex_none().whitespace_nowrap().text_color(r.hit ? t.accent : base).when(r.hit, (el) => el.font_semibold()).child(r.text)));
-    const sel = i === cur && row.kind !== "note";
-    const showActions = (sel || this.hovered === row.key) && (row.kind === "file" || row.kind === "line");
-    const action = (id, icon, tip, fn) => div().id(`qa-${id}-${i}`).size(18).flex_none().flex().items_center().justify_center().rounded(3)
+      .children(runs.filter((part) => part.text).map((part) => div().flex_none().whitespace_nowrap().text_color(part.hit ? t.accent : base).when(part.hit, (el) => el.font_semibold()).child(part.text)));
+    const selected = index === cur && row.kind !== "note";
+    const showActions = (selected || this.hovered === row.key) && (row.kind === "file" || row.kind === "line");
+    const action = (id, icon, tip, handler) => div().id(`qa-${id}-${index}`).size(18).flex_none().flex().items_center().justify_center().rounded(3)
       .text_color(t.foreground).hover((s) => s.bg(tint(t.foreground, "22"))).tooltip(tip)
-      .on_click((_e, cx) => { cx.stop_propagation(); fn(cx); }).child(Icon(icon, 13));
+      .on_click((_e, cx) => { cx.stop_propagation(); handler(cx); }).child(Icon(icon, 13));
     return h_flex().id(`qo-${row.key}`).h(QO_ROW).w_full().px(5)
       .child(h_flex().id(`qi-${row.key}`).size_full().pl(6).pr(4).gap(6).items_center().rounded(4)
-        .when(Boolean(row.group) && i > 0, (el) => el.border_t(1).border_color(t.border))
-        .when(sel, (el) => el.bg(t.selected))
-        .when(!sel && row.kind !== "note", (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)))
+        .when(Boolean(row.group) && index > 0, (el) => el.border_t(1).border_color(t.border))
+        .when(selected, (el) => el.bg(t.selected))
+        .when(!selected && row.kind !== "note", (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)))
         .when(Boolean(row.tip), (el) => el.tooltip(row.tip))
-        .on_hover((h, cx) => {
-          const next = h ? row.key : this.hovered === row.key ? null : this.hovered;
-          if (next !== this.hovered) {
-            this.hovered = next;
-            cx.notify();
-          }
-        })
-        .on_click((e, cx) => this.choose(i, cx, Boolean(e?.modifiers?.platform || e?.modifiers?.control)))
+        .on_hover((hovering, cx) => this.hoverRow(row.key, hovering, cx))
+        .on_click((e, cx) => this.choose(index, cx, Boolean(e?.modifiers?.platform || e?.modifiers?.control)))
         .when(Boolean(row.icon), (el) => el.child(div().w(16).flex_none().flex().items_center().justify_center().child(this.iconEl(t, row.icon))))
         .child(runsEl(row.label, row.kind === "note" ? t.muted : t.foreground, 13))
         .child(h_flex().flex_1().min_w(0).overflow_hidden().child(runsEl(row.desc, t.dim, 12)))
@@ -390,7 +517,39 @@ export const quickMethods = {
         .when(Boolean(row.group), (el) => el.child(div().flex_none().text_size(12).text_color(t.dim).child(row.group)))
         .when(showActions, (el) => el
           .child(action("side", "split", "Open to the Side (⌘Enter)", () => { this.close(); this.openFile(row.file, row.line, true); }))
-          .when(Boolean(row.recent), (e2) => e2.child(action("forget", "x", "Remove from Recently Opened", (cx) => this.forget(row.file, cx))))));
+          .when(Boolean(row.recent), (inner) => inner.child(action("forget", "x", "Remove from Recently Opened", (cx) => this.forget(row.file, cx))))));
+  },
+
+  hoverRow(key, hovering, cx) {
+    let next = this.hovered;
+    if (hovering) {
+      next = key;
+    } else if (this.hovered === key) {
+      next = null;
+    }
+    if (next === this.hovered) {
+      return;
+    }
+    this.hovered = next;
+    cx.notify();
+  },
+
+  onQuickKey(event, cur, count, cx) {
+    const targets = {
+      down: () => cur + 1,
+      up: () => cur - 1,
+      pagedown: () => Math.min(count - 1, cur + QO_ROWS - 1),
+      pageup: () => Math.max(0, cur - QO_ROWS + 1),
+    };
+    if (targets[event.key]) {
+      cx.stop_propagation();
+      this.move(targets[event.key](), count, cx);
+      return;
+    }
+    if (event.key === "escape") {
+      cx.stop_propagation();
+      this.close();
+    }
   },
 
   renderQuick() {
@@ -399,25 +558,18 @@ export const quickMethods = {
     const cur = Math.min(this.cursor, Math.max(0, rows.length - 1));
     const mac = window()?.platform === "macos";
     const shown = Math.max(1, Math.min(rows.length, QO_ROWS));
-    const listH = shown * QO_ROW;
+    const listHeight = shown * QO_ROW;
     const top = Math.max(0, Math.min(this.top, Math.max(0, rows.length - QO_ROWS)));
     return v_flex().id("vx-quick").w_full().bg(t.popover ?? t.surface).text_color(t.foreground)
       .track_focus(this.focusHandle)
-      .on_key_down((e, cx) => {
-        const k = e.key;
-        if (k === "down") { cx.stop_propagation(); this.move(cur + 1, rows.length, cx); }
-        else if (k === "up") { cx.stop_propagation(); this.move(cur - 1, rows.length, cx); }
-        else if (k === "pagedown") { cx.stop_propagation(); this.move(Math.min(rows.length - 1, cur + QO_ROWS - 1), rows.length, cx); }
-        else if (k === "pageup") { cx.stop_propagation(); this.move(Math.max(0, cur - QO_ROWS + 1), rows.length, cx); }
-        else if (k === "escape") { cx.stop_propagation(); this.close(); }
-      })
+      .on_key_down((event, cx) => this.onQuickKey(event, cur, rows.length, cx))
       .child(div().flex_none().p(6)
         .child(h_flex().h(26).px(6).items_center().rounded(4).border_1().border_color(t.accent).bg(t.canvas ?? t.background)
           .child(Input.new(this.query).flex_1().h(24).text_size(13))))
-      .child(v_flex().id("qo-rows").flex_none().w_full().h(listH).mb(6).relative().overflow_hidden()
-        .on_scroll_wheel((e, cx) => this.scrollBy(e, cx))
-        .children(rows.slice(top, top + QO_ROWS).map((row, k) => this.drawRow(t, row, top + k, cur, mac)))
+      .child(v_flex().id("qo-rows").flex_none().w_full().h(listHeight).mb(6).relative().overflow_hidden()
+        .on_scroll_wheel((event, cx) => this.scrollBy(event, cx))
+        .children(rows.slice(top, top + QO_ROWS).map((row, offset) => this.drawRow(t, row, top + offset, cur, mac)))
         .when(rows.length > QO_ROWS, (el) => el.child(div().absolute().right(1).w(6).rounded(3).bg(tint(t.foreground, "30"))
-          .top(Math.round((top / rows.length) * listH)).h(Math.max(18, Math.round((QO_ROWS / rows.length) * listH))))));
+          .top(Math.round((top / rows.length) * listHeight)).h(Math.max(MIN_THUMB_HEIGHT, Math.round((QO_ROWS / rows.length) * listHeight))))));
   },
 };

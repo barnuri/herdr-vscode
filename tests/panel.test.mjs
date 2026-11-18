@@ -16,7 +16,7 @@ test("parsePorts: one entry per port, hosts merged, sorted", () => {
 test("workspaceProblems: conflicts, git errors, failing CI, behind", () => {
   const roots = [{ name: "web", path: "/w" }, { name: "api", path: "/a" }];
   const out = workspaceProblems(roots, { "/w": { branch: "main", conflicts: 2, behind: 1 }, "/a": { error: "not a git repo" } }, { "/w": { kind: "failure", number: 7 } });
-  assert.deepEqual(out.map((p) => [p.root.name, p.level, p.text]), [
+  assert.deepEqual(out.map((problem) => [problem.root.name, problem.level, problem.text]), [
     ["web", "error", "2 files with merge conflicts"],
     ["web", "error", "Pipeline #7 failed on main"],
     ["web", "warning", "1 commit behind on main"],
@@ -43,7 +43,7 @@ test("parseCheckOutput: tsc (both formats), eslint stylish, file:line:col", () =
     "lib/d.js:7:3: warning Something odd",
     "> next build",
   ].join("\n"), { root: "/repo", dir: "/repo/web" });
-  assert.deepEqual(out.map((p) => [p.rel, p.line, p.col, p.level, p.message, p.rule]), [
+  assert.deepEqual(out.map((item) => [item.rel, item.line, item.col, item.level, item.message, item.rule]), [
     ["web/src/a.ts", 12, 5, "error", "Type 'x' is not assignable.", "TS2322"],
     ["web/src/b.ts", 3, 1, "error", "';' expected.", "TS1005"],
     ["web/src/c.tsx", 4, 10, "error", "'x' is defined but never used", "no-unused-vars"],
@@ -53,14 +53,16 @@ test("parseCheckOutput: tsc (both formats), eslint stylish, file:line:col", () =
 });
 
 test("nav: visit drops forward history; step skips closed tabs", () => {
-  let h = emptyNav();
-  for (const t of ["a", "b", "c"]) h = navVisit(h, t);
-  assert.deepEqual(h, { list: ["a", "b", "c"], at: 2 });
-  const back = navStep(h, -1, new Set(["a", "c"]));
+  let history = emptyNav();
+  for (const tab of ["a", "b", "c"]) {
+    history = navVisit(history, tab);
+  }
+  assert.deepEqual(history, { list: ["a", "b", "c"], at: 2 });
+  const back = navStep(history, -1, new Set(["a", "c"]));
   assert.deepEqual(back, { list: ["a", "b", "c"], at: 0 });
   assert.equal(navStep(back, -1, new Set(["a", "c"])), null);
   assert.deepEqual(navVisit(back, "d"), { list: ["a", "d"], at: 1 });
-  assert.equal(navVisit(h, "c"), h);
+  assert.equal(navVisit(history, "c"), history);
 });
 
 test("grepArgs and parseGrep", () => {
@@ -68,9 +70,9 @@ test("grepArgs and parseGrep", () => {
     ["grep", "-n", "-I", "--column", "--no-color", "--untracked", "--full-name", "-i", "-w", "-F", "-e", "foo", "--", ":(glob)**/*.ts", ":(glob)src/lib"]);
   assert.ok(grepArgs("a.b", { regex: true, caseSensitive: true }).includes("-P"));
   assert.ok(grepArgs("a.b", { regex: true, perl: false }).includes("-E"));
-  const r = parseGrep("src/a.ts:3:7:const foo = 1\nsrc/a.ts:9:1:foo()\nREADME.md:1:3:# foo\n");
-  assert.equal(r.total, 3);
-  assert.deepEqual(r.files.map((f) => [f.rel, f.matches.length]), [["src/a.ts", 2], ["README.md", 1]]);
+  const grep = parseGrep("src/a.ts:3:7:const foo = 1\nsrc/a.ts:9:1:foo()\nREADME.md:1:3:# foo\n");
+  assert.equal(grep.total, 3);
+  assert.deepEqual(grep.files.map((file) => [file.rel, file.matches.length]), [["src/a.ts", 2], ["README.md", 1]]);
   assert.equal(parseGrep("a:1:1:x\nb:2:1:y\n", { maxMatches: 1 }).truncated, true);
   assert.deepEqual(matchSnippet("    const foo = 1", 11, 3), { head: "const ", hit: "foo", tail: " = 1" });
 });

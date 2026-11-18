@@ -6,8 +6,8 @@ import { findNode, withContent } from "../shared/layout-core.js";
 
 test("go to file ranks name hits first", () => {
   const files = ["src/components/Card.tsx", "src/cardigan/util.ts", "docs/scorecard.md", "src/app/page.tsx", "README.md"].map((rel) => ({ root: "/w", rel }));
-  assert.deepEqual(rankFiles(files, "card").map((f) => f.rel).slice(0, 3), ["src/components/Card.tsx", "docs/scorecard.md", "src/cardigan/util.ts"]);
-  assert.equal(rankFiles(files, "scpg")[0].rel, "src/app/page.tsx"); // scattered: s…c…p…g
+  assert.deepEqual(rankFiles(files, "card").map((file) => file.rel).slice(0, 3), ["src/components/Card.tsx", "docs/scorecard.md", "src/cardigan/util.ts"]);
+  assert.equal(rankFiles(files, "scpg")[0].rel, "src/app/page.tsx");
   assert.equal(scorePath("a/b.ts", "zz"), -1);
   assert.equal(rankFiles(files, "").length, 5);
 });

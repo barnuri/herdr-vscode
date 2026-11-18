@@ -1,12 +1,15 @@
-// Layout trees as data: find a node, or copy the tree with one block's content replaced
-// (the bottom panel shows its terminal this way, through layout.set). Pure: tested under node.
-
 export function findNode(node, id) {
-  if (!node) return null;
-  if (node.id === id) return node;
-  for (const c of node.children ?? []) {
-    const hit = findNode(c, id);
-    if (hit) return hit;
+  if (!node) {
+    return null;
+  }
+  if (node.id === id) {
+    return node;
+  }
+  for (const child of node.children ?? []) {
+    const hit = findNode(child, id);
+    if (hit) {
+      return hit;
+    }
   }
   return null;
 }
@@ -14,13 +17,15 @@ export function findNode(node, id) {
 // A deep copy of `tree` where the node `id` has `content` (null when there's no such node).
 export function withContent(tree, id, content) {
   let found = false;
-  const walk = (n) => {
-    const copy = { ...n };
-    if (n.id === id) {
+  const walk = (node) => {
+    const copy = { ...node };
+    if (node.id === id) {
       copy.content = content;
       found = true;
     }
-    if (Array.isArray(n.children)) copy.children = n.children.map(walk);
+    if (Array.isArray(node.children)) {
+      copy.children = node.children.map(walk);
+    }
     return copy;
   };
   const out = walk(tree);

@@ -1,7 +1,3 @@
-// vx-changes: Source Control (panel.js + sections.js) and its diff tab (diff.js).
-//   panel  props {}                        commit box, changes, repositories, GitLens sections
-//   view   props { mode: "view", space }   the diff tab in the centre
-//   popups props { scmMenu | scmAsk | confirm | repoMenu }   menus and dialogs (scm-popups.js)
 import { View } from "gpui-kit";
 import { TextareaState, InputState } from "gpui-base";
 import { props, checking } from "herdr";
@@ -15,41 +11,77 @@ import { RepoMenu } from "./repo-picker.js";
 import { ConfirmView } from "./ui.js";
 
 class VxChanges extends View {
+  static FOLLOW_MS = 400;
+  static REFRESH_MS = 10000;
+  static VIEW_MODE = "view";
+  static MESSAGE_ROWS = 3;
+  static MESSAGE_MIN_ROWS = 2;
+  static MESSAGE_MAX_ROWS = 10;
+
+  static {
+    Object.assign(this.prototype, panelMethods, diffMethods, sectionMethods, scmPopupMethods, confirmMethods);
+  }
+
   init(given, cx) {
-    const p = props() ?? given ?? {};
+    const options = props() ?? given ?? {};
     loadIcons(this, cx);
-    if (p.repoMenu) return void (this.repoMenu = p.repoMenu);
-    if (p.confirm) {
-      this.confirmSpec = p.confirm;
-      this.confirmOverlay = p.overlay;
-      this.confirmFocus = cx.focus_handle();
-      this.confirmFocus.focus();
+    if (options.repoMenu) {
+      this.repoMenu = options.repoMenu;
       return;
     }
-    if (p.scmMenu || p.scmAsk) return void this.initScmPopup(p, cx);
-    if (p.mode === "view") {
-      this.mode = "view";
-      if (!checking()) this.initDiff(p, cx);
+    if (options.confirm) {
+      this.initConfirm(options, cx);
       return;
     }
-    this.message = TextareaState.new({ placeholder: "Message (⌘Enter to commit)", rows: 3 });
-    this.message.set_auto_grow(2, 10);
+    if (options.scmMenu || options.scmAsk) {
+      this.initScmPopup(options, cx);
+      return;
+    }
+    if (options.mode === VxChanges.VIEW_MODE) {
+      this.mode = VxChanges.VIEW_MODE;
+      if (!checking()) {
+        this.initDiff(options, cx);
+      }
+      return;
+    }
+    this.initPanelView(cx);
+  }
+
+  initConfirm(options, cx) {
+    this.confirmSpec = options.confirm;
+    this.confirmOverlay = options.overlay;
+    this.confirmFocus = cx.focus_handle();
+    this.confirmFocus.focus();
+  }
+
+  initPanelView(cx) {
+    this.message = TextareaState.new({ placeholder: "Message (⌘Enter to commit)", rows: VxChanges.MESSAGE_ROWS });
+    this.message.set_auto_grow(VxChanges.MESSAGE_MIN_ROWS, VxChanges.MESSAGE_MAX_ROWS);
     this.search = InputState.new({ placeholder: "Search commits" });
     this.initPanel(cx);
     this.initSections();
-    if (checking()) return;
-    cx.timer.every(400, (cx) => this.followPanel(cx));
-    cx.timer.every(10000, (cx) => this.refresh(cx));
+    if (checking()) {
+      return;
+    }
+    cx.timer.every(VxChanges.FOLLOW_MS, (cx) => this.followPanel(cx));
+    cx.timer.every(VxChanges.REFRESH_MS, (cx) => this.refresh(cx));
   }
 
   render() {
-    if (this.repoMenu) return RepoMenu(this);
-    if (this.confirmSpec) return ConfirmView(this);
-    if (this.scmMenu) return this.renderScmMenu();
-    if (this.scmAsk) return this.renderScmAsk();
-    return this.mode === "view" ? this.renderDiff() : this.renderPanel();
+    if (this.repoMenu) {
+      return RepoMenu(this);
+    }
+    if (this.confirmSpec) {
+      return ConfirmView(this);
+    }
+    if (this.scmMenu) {
+      return this.renderScmMenu();
+    }
+    if (this.scmAsk) {
+      return this.renderScmAsk();
+    }
+    return this.mode === VxChanges.VIEW_MODE ? this.renderDiff() : this.renderPanel();
   }
 }
 
-Object.assign(VxChanges.prototype, panelMethods, diffMethods, sectionMethods, scmPopupMethods, confirmMethods);
 export default VxChanges;

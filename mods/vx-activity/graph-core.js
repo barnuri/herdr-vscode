@@ -1,79 +1,90 @@
-// Commit-graph lanes, like `git log --graph`, as data a view can draw row by row. Pure.
-// Input: commits newest first, each { hash, parents: [hash...] }.
-// Output per row: { col, top: [cols with a line coming down into this row],
-//   bottom: [cols with a line going on below], span: [min, max] of the horizontal joint
-//   at this row's middle (a merge or a branch point), width }.
+// Commit-graph lanes, like `git log --graph`, from commits newest first ({ hash, parents }).
+// Per row: col, top/bottom (cols with a line above/below), span (the joint's [min, max]), joined, forks.
+import { splitRecords } from "./git-core.js";
 
 export const GRAPH_FORMAT = "--format=%H%x00%P%x00%D%x00%an%x00%at%x00%s%x1e";
 
+const REF_KINDS = [
+  { prefix: "HEAD -> ", kind: "head" },
+  { prefix: "tag: ", kind: "tag" },
+];
+
 export function parseGraphLog(stdout) {
-  return String(stdout ?? "")
-    .split("\x1e")
-    .map((r) => r.replace(/^\n/, ""))
-    .filter((r) => r.includes("\0"))
-    .map((r) => {
-      const [hash, parents, refs, author, at, subject] = r.split("\0");
-      return {
-        hash,
-        parents: parents ? parents.split(" ").filter(Boolean) : [],
-        refs: refs ? refs.split(", ").map((s) => s.trim()).filter(Boolean) : [],
-        author,
-        at: Number(at),
-        subject,
-      };
-    });
+  return splitRecords(stdout).map(([hash, parents, refs, author, at, subject]) => ({
+    hash,
+    parents: parents ? parents.split(" ").filter(Boolean) : [],
+    refs: refs ? refs.split(", ").map((ref) => ref.trim()).filter(Boolean) : [],
+    author,
+    at: Number(at),
+    subject,
+  }));
+}
+
+function refLabel(ref) {
+  const prefixed = REF_KINDS.find(({ prefix }) => ref.startsWith(prefix));
+  if (prefixed) {
+    return { kind: prefixed.kind, name: ref.slice(prefixed.prefix.length) };
+  }
+  if (ref === "HEAD") {
+    return { kind: "head", name: "HEAD" };
+  }
+  if (ref.includes("/") && !ref.startsWith("refs/")) {
+    return { kind: "remote", name: ref };
+  }
+  return { kind: "branch", name: ref };
 }
 
 // "HEAD -> main", "origin/main", "tag: v1" -> labels with a kind for colouring.
 export function refLabels(refs) {
-  const out = [];
-  for (const r of refs) {
-    if (r.startsWith("HEAD -> ")) out.push({ kind: "head", name: r.slice(8) });
-    else if (r === "HEAD") out.push({ kind: "head", name: "HEAD" });
-    else if (r.startsWith("tag: ")) out.push({ kind: "tag", name: r.slice(5) });
-    else if (r.includes("/") && !r.startsWith("refs/")) out.push({ kind: "remote", name: r });
-    else out.push({ kind: "branch", name: r });
-  }
-  return out;
+  return refs.map(refLabel);
 }
 
+const occupiedColumns = (lanes) => lanes.map((hash, index) => (hash ? index : -1)).filter((index) => index >= 0);
+
 export function layoutGraph(commits) {
-  const lanes = []; // the commit each column is waiting for
+  // The commit each column is waiting for.
+  const lanes = [];
   const rows = [];
   let width = 0;
-  const free = () => {
-    const i = lanes.indexOf(null);
-    if (i >= 0) return i;
+  const freeColumn = () => {
+    const index = lanes.indexOf(null);
+    if (index >= 0) {
+      return index;
+    }
     lanes.push(null);
     return lanes.length - 1;
   };
-  for (const c of commits) {
-    let col = lanes.indexOf(c.hash);
-    const top = lanes.map((h, i) => (h ? i : -1)).filter((i) => i >= 0);
-    if (col < 0) col = free(); // a branch tip nobody pointed at yet
-    // Other columns waiting for this same commit join it here.
+  const columnFor = (parent) => {
+    const existing = lanes.indexOf(parent);
+    if (existing >= 0) {
+      return existing;
+    }
+    const column = freeColumn();
+    lanes[column] = parent;
+    return column;
+  };
+  for (const commit of commits) {
+    const top = occupiedColumns(lanes);
+    let col = lanes.indexOf(commit.hash);
+    if (col < 0) {
+      col = freeColumn();
+    }
     const joined = [];
-    lanes.forEach((h, i) => {
-      if (h === c.hash && i !== col) {
-        joined.push(i);
-        lanes[i] = null;
+    lanes.forEach((hash, index) => {
+      if (hash === commit.hash && index !== col) {
+        joined.push(index);
+        lanes[index] = null;
       }
     });
-    lanes[col] = c.parents[0] ?? null;
-    const forks = [];
-    for (const p of c.parents.slice(1)) {
-      let at = lanes.indexOf(p);
-      if (at < 0) {
-        at = free();
-        lanes[at] = p;
-      }
-      forks.push(at);
+    lanes[col] = commit.parents[0] ?? null;
+    const forks = commit.parents.slice(1).map(columnFor);
+    while (lanes.length && lanes[lanes.length - 1] === null) {
+      lanes.pop();
     }
-    while (lanes.length && lanes[lanes.length - 1] === null) lanes.pop();
-    const bottom = lanes.map((h, i) => (h ? i : -1)).filter((i) => i >= 0);
+    const bottom = occupiedColumns(lanes);
     const linked = [col, ...joined, ...forks];
     const span = [Math.min(...linked), Math.max(...linked)];
-    width = Math.max(width, col + 1, ...top.map((i) => i + 1), ...bottom.map((i) => i + 1));
+    width = Math.max(width, col + 1, ...top.map((index) => index + 1), ...bottom.map((index) => index + 1));
     rows.push({ col, top, bottom, span, joined, forks });
   }
   return { rows, width };

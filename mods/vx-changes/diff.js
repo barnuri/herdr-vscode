@@ -1,102 +1,200 @@
-// The diff tab: one per space, showing the file last picked in Changes, inline or side by side,
-// syntax-coloured. A new file is all additions; a conflicted file shows its working copy.
-// Working and staged diffs stage or unstage one hunk at a time (`git apply --cached`): click a
-// hunk's @@ line or step with ‹ ›, then Stage Hunk / Unstage Hunk.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
 import { theme, readTextFile, exec, notify } from "herdr";
 import { git, bump } from "./ws.js";
 import { splitHunks, hunkPatch } from "./scm-core.js";
-import { READ } from "./git-core.js";
-import { diffRows, splitRows } from "./git-core.js";
+import { READ, diffRows, splitRows } from "./git-core.js";
 import { lexLine, languageOf, syntaxColors } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, tint, SPIN_MS } from "./ui.js";
 import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
 
 const MOD = "vx-changes";
 const MAX_ROWS = 6000;
+const POLL_MS = 2000;
+const SPLIT_KEY = "split";
+const SPLIT_ON = "1";
+const SPLIT_OFF = "0";
+const TAB_SPACES = "    ";
+const SHORT_SHA = 8;
+const ERROR_TAIL = 400;
+const SUCCESS_TIMEOUT_MS = 2000;
+const ERROR_TIMEOUT_MS = 6000;
+const LINE_HEIGHT_FACTOR = 1.55;
+const NUMBER_WIDTH_FACTOR = 3;
+const MARK_WIDTH_FACTOR = 1.6;
+const HUNK_ROW = "@";
+const ADDED = "+";
+const REMOVED = "-";
+const CONTEXT = " ";
+const HUNK_KEY_PREFIX = "h";
+const PLAIN_DIFF = ["--no-ext-diff", "--no-textconv", "--no-color"];
 // Applies a patch to the index from a temp file; the patch travels as an argument, never as script.
 const APPLY = 'f=$(mktemp) || exit 1; printf "%s" "$1" > "$f"; shift; git "$@" "$f"; c=$?; rm -f "$f"; exit $c';
 
+function diffArgs(target) {
+  if (target.scope === "commit") {
+    return ["--literal-pathspecs", "show", "--format=", "-m", "--first-parent", ...PLAIN_DIFF, target.sha, "--", target.path];
+  }
+  if (target.scope === "stash") {
+    return ["--literal-pathspecs", "diff", ...PLAIN_DIFF, `${target.ref}^1`, target.ref, "--", target.path];
+  }
+  if (target.scope === "compare") {
+    return ["--literal-pathspecs", "diff", ...PLAIN_DIFF, `${target.base}...${target.head ?? "HEAD"}`, "--", target.path];
+  }
+  return ["--literal-pathspecs", "diff", ...(target.scope === "staged" ? ["--cached"] : []), ...PLAIN_DIFF, "--", target.path];
+}
+
+function scopeLabel(target) {
+  if (target.untracked) {
+    return "new";
+  }
+  if (target.scope === "commit") {
+    return `commit ${String(target.sha).slice(0, SHORT_SHA)}`;
+  }
+  if (target.scope === "stash") {
+    return target.ref;
+  }
+  if (target.scope === "compare") {
+    return `${target.base}…${target.head ?? "HEAD"}`;
+  }
+  return target.scope;
+}
+
+function scopeColor(colors, scope) {
+  if (scope === "staged") {
+    return colors.ansi2;
+  }
+  return scope === "commit" || scope === "compare" ? colors.accent : colors.ansi3;
+}
+
+function kindColor(colors, kind) {
+  if (kind === ADDED) {
+    return colors.ansi2;
+  }
+  return kind === REMOVED ? colors.ansi1 : colors.dim;
+}
+
+const lineNumber = (value) => (value !== undefined ? String(value) : "");
+
+const stageableScope = (target) => target.scope === "unstaged" || target.scope === "staged";
+
+const isMergeDiff = (head) => /^diff --(cc|combined)/.test(head[0] ?? "");
+
 export const diffMethods = {
-  initDiff(p, cx) {
-    this.viewSpace = p.space;
+  initDiff(options, cx) {
+    this.viewSpace = options.space;
     // A tab opened directly (herdr-app do tab.new --mod vx-changes --props {...}) names its diff.
-    this.propsTarget = p.target?.root && p.target?.path ? p.target : null;
-    this.fixed = Boolean(p.fixed && this.propsTarget);
-    this.split = localStorage.getItem("split") === "1";
+    this.propsTarget = options.target?.root && options.target?.path ? options.target : null;
+    this.fixed = Boolean(options.fixed && this.propsTarget);
+    this.split = localStorage.getItem(SPLIT_KEY) === SPLIT_ON;
     this.scroller = VirtualListScrollHandle.new();
-    cx.timer.every(2000, (cx) => this.syncDiff(cx, true));
+    cx.timer.every(POLL_MS, (cx) => this.syncDiff(cx, true));
     this.syncDiff(cx);
   },
 
-  syncDiff(cx, poll = false) {
-    // Kept in place (vx-tabs): from then on this tab shows its own diff.
-    if (!this.fixed) {
-      this.myTab ??= viewerTab(MOD, this.viewSpace);
-      const kept = this.myTab ? keptTabs()[this.myTab] : null;
-      if (kept?.value?.path) {
-        this.fixed = true;
-        this.propsTarget = kept.value;
-      }
+  // A tab kept in place (vx-tabs) shows its own diff from then on.
+  adoptKeptTab() {
+    if (this.fixed) {
+      return;
     }
-    const v = this.fixed ? this.propsTarget : viewerValue(MOD, this.viewSpace) ?? this.propsTarget;
-    if (!v?.path) return;
-    const key = `${v.on ?? ""}|${v.root}|${v.scope}|${v.sha ?? v.ref ?? v.base ?? ""}|${v.path}`;
+    this.myTab ??= viewerTab(MOD, this.viewSpace);
+    const kept = this.myTab ? keptTabs()[this.myTab] : null;
+    if (!kept?.value?.path) {
+      return;
+    }
+    this.fixed = true;
+    this.propsTarget = kept.value;
+  },
+
+  syncDiff(cx, poll = false) {
+    this.adoptKeptTab();
+    const target = this.fixed ? this.propsTarget : viewerValue(MOD, this.viewSpace) ?? this.propsTarget;
+    if (!target?.path) {
+      return;
+    }
+    const key = `${target.on ?? ""}|${target.root}|${target.scope}|${target.sha ?? target.ref ?? target.base ?? ""}|${target.path}`;
+    if (key === this.diffKey && !poll) {
+      return;
+    }
     if (key !== this.diffKey) {
       this.diffKey = key;
-      this.target = v;
+      this.target = target;
       this.rows = null;
       this.problem = null;
       this.hunk = 0;
       this.hunks = null;
-    } else if (!poll) return;
+    }
     this.loadDiff(cx);
   },
 
+  async untrackedLines(target) {
+    const text = await readTextFile(`${target.root}/${target.path}`, { on: target.on }).catch(() => null);
+    if (text === null) {
+      this.problem = "This file is gone, too large, or unreadable.";
+      return null;
+    }
+    if (text.includes("\0")) {
+      this.problem = "Binary file.";
+      return null;
+    }
+    const all = text.replace(/\r/g, "").replace(/\n$/, "").split("\n");
+    return [`@@ -0,0 +1,${all.length} @@ new file`, ...all.map((line) => `+${line}`)];
+  },
+
+  async trackedLines(target) {
+    const result = await git(diffArgs(target), { cwd: target.root, on: target.on });
+    if (result.code !== 0) {
+      this.problem = result.stderr.trim() || "git diff failed";
+      return null;
+    }
+    const lines = result.stdout.replace(/\n$/, "").split("\n");
+    const first = lines.findIndex((line) => line.startsWith("@@"));
+    if (first < 0) {
+      this.problem = /^Binary files/m.test(result.stdout) ? "Binary file changed." : "No changes to show here any more.";
+      return null;
+    }
+    const parts = splitHunks(lines);
+    this.hunks = stageableScope(target) && !target.untracked && !isMergeDiff(parts.head) ? parts : null;
+    return lines.slice(first);
+  },
+
+  applyLines(lines) {
+    const text = JSON.stringify(lines);
+    if (text === this.lastLines) {
+      return;
+    }
+    this.lastLines = text;
+    this.problem = null;
+    this.truncated = lines.length > MAX_ROWS;
+    this.rows = diffRows(lines.slice(0, MAX_ROWS).map((line) => line.replace(/\t/g, TAB_SPACES)));
+    let hunkCount = 0;
+    for (const row of this.rows) {
+      if (row.kind === HUNK_ROW) {
+        row.hunk = hunkCount++;
+      }
+    }
+    // A truncated diff no longer matches the patch.
+    if (this.truncated && this.hunks) {
+      this.hunks = null;
+    }
+    this.hunk = Math.min(this.hunk ?? 0, Math.max(0, hunkCount - 1));
+    this.pairs = splitRows(this.rows);
+    this.adds = this.rows.filter((row) => row.kind === ADDED).length;
+    this.dels = this.rows.filter((row) => row.kind === REMOVED).length;
+  },
+
   loadDiff(cx) {
-    const v = this.target;
-    if (!v || this.loadingDiff) return;
+    const target = this.target;
+    if (!target || this.loadingDiff) {
+      return;
+    }
     this.loadingDiff = true;
     cx.spawn(async (cx) => {
       try {
-        let lines;
-        if (v.untracked) {
-          const text = await readTextFile(`${v.root}/${v.path}`, { on: v.on }).catch(() => null);
-          if (text === null) return void (this.problem = "This file is gone, too large, or unreadable.");
-          if (text.includes("\0")) return void (this.problem = "Binary file.");
-          const all = text.replace(/\r/g, "").replace(/\n$/, "").split("\n");
-          lines = [`@@ -0,0 +1,${all.length} @@ new file`, ...all.map((l) => `+${l}`)];
-        } else {
-          const plain = ["--no-ext-diff", "--no-textconv", "--no-color"];
-          const args =
-            v.scope === "commit" ? ["--literal-pathspecs", "show", "--format=", "-m", "--first-parent", ...plain, v.sha, "--", v.path]
-            : v.scope === "stash" ? ["--literal-pathspecs", "diff", ...plain, `${v.ref}^1`, v.ref, "--", v.path]
-            : v.scope === "compare" ? ["--literal-pathspecs", "diff", ...plain, `${v.base}...${v.head ?? "HEAD"}`, "--", v.path]
-            : ["--literal-pathspecs", "diff", ...(v.scope === "staged" ? ["--cached"] : []), ...plain, "--", v.path];
-          const r = await git(args, { cwd: v.root, on: v.on });
-          if (r.code !== 0) return void (this.problem = r.stderr.trim() || "git diff failed");
-          lines = r.stdout.replace(/\n$/, "").split("\n");
-          const first = lines.findIndex((l) => l.startsWith("@@"));
-          if (first < 0) return void (this.problem = /^Binary files/m.test(r.stdout) ? "Binary file changed." : "No changes to show here any more.");
-          // Hunks can be staged on their own in working and staged diffs (not merge diffs).
-          const parts = splitHunks(lines);
-          this.hunks = (v.scope === "unstaged" || v.scope === "staged") && !v.untracked && !/^diff --(cc|combined)/.test(parts.head[0] ?? "") ? parts : null;
-          lines = lines.slice(first);
+        const lines = target.untracked ? await this.untrackedLines(target) : await this.trackedLines(target);
+        if (lines) {
+          this.applyLines(lines);
         }
-        const text = JSON.stringify(lines);
-        if (text === this.lastLines) return;
-        this.lastLines = text;
-        this.problem = null;
-        this.truncated = lines.length > MAX_ROWS;
-        this.rows = diffRows(lines.slice(0, MAX_ROWS).map((l) => l.replace(/\t/g, "    ")));
-        let k = 0;
-        for (const r of this.rows) if (r.kind === "@") r.hunk = k++;
-        if (this.truncated && this.hunks) this.hunks = null; // the rows wouldn't match the patch
-        this.hunk = Math.min(this.hunk ?? 0, Math.max(0, k - 1));
-        this.pairs = splitRows(this.rows);
-        this.adds = this.rows.filter((r) => r.kind === "+").length;
-        this.dels = this.rows.filter((r) => r.kind === "-").length;
       } finally {
         this.loadingDiff = false;
         cx.notify();
@@ -104,53 +202,66 @@ export const diffMethods = {
     });
   },
 
-  cell(t, C, r, lang, side) {
-    const size = codeSize();
-    if (!r) return div().flex_1().h_full().bg(tint(t.raised, "80"));
-    const bg = r.kind === "+" ? tint(t.ansi2, "1f") : r.kind === "-" ? tint(t.ansi1, "1f") : null;
-    const runs = lexLine(r.text, lang).runs;
-    const num = side === "left" ? r.old : side === "right" ? r.next : null;
-    return h_flex().flex_1().min_w(0).h_full().items_center().when(Boolean(bg), (el) => el.bg(bg))
-      .when(side === "inline", (el) => el
-        .child(div().w(size * 3).flex_none().text_right().text_color(t.dim).child(r.old !== undefined ? String(r.old) : ""))
-        .child(div().w(size * 3).flex_none().text_right().text_color(t.dim).child(r.next !== undefined ? String(r.next) : "")))
-      .when(side !== "inline", (el) => el.child(div().w(size * 3).flex_none().text_right().text_color(t.dim).child(num !== undefined ? String(num) : "")))
-      .child(div().w(size * 1.6).flex_none().text_center().text_color(r.kind === "+" ? t.ansi2 : r.kind === "-" ? t.ansi1 : t.dim).child(r.kind === " " ? "" : r.kind))
-      .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap()
-        .children(runs.map((x) => div().flex_none().whitespace_nowrap().text_color(x.kind ? C[x.kind] : t.foreground).child(x.text || " "))));
+  lineNumbers(colors, row, side, size) {
+    const number = (value) => div().w(size * NUMBER_WIDTH_FACTOR).flex_none().text_right().text_color(colors.dim).child(lineNumber(value));
+    if (side === "inline") {
+      return [number(row.old), number(row.next)];
+    }
+    return [number(side === "left" ? row.old : row.next)];
   },
 
-  // ── hunks ──────────────────────────────────────────────────────────────────────────────
+  cell(colors, syntax, row, lang, side) {
+    const size = codeSize();
+    if (!row) {
+      return div().flex_1().h_full().bg(tint(colors.raised, "80"));
+    }
+    const background = row.kind === ADDED ? tint(colors.ansi2, "1f") : row.kind === REMOVED ? tint(colors.ansi1, "1f") : null;
+    const runs = lexLine(row.text, lang).runs;
+    return h_flex().flex_1().min_w(0).h_full().items_center().when(Boolean(background), (el) => el.bg(background))
+      .children(this.lineNumbers(colors, row, side, size))
+      .child(div().w(size * MARK_WIDTH_FACTOR).flex_none().text_center().text_color(kindColor(colors, row.kind)).child(row.kind === CONTEXT ? "" : row.kind))
+      .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap()
+        .children(runs.map((run) => div().flex_none().whitespace_nowrap().text_color(run.kind ? syntax[run.kind] : colors.foreground).child(run.text || " "))));
+  },
+
   goHunk(step, cx) {
-    const n = this.hunks?.hunks.length ?? 0;
-    if (!n) return;
-    this.hunk = (this.hunk + step + n) % n;
+    const count = this.hunks?.hunks.length ?? 0;
+    if (!count) {
+      return;
+    }
+    this.hunk = (this.hunk + step + count) % count;
     const items = this.split ? this.pairs : this.rows;
-    const at = items.findIndex((r) => r.kind === "@" && r.hunk === this.hunk);
-    if (at >= 0) this.scroller.scroll_to_item(at, "top");
+    const index = items.findIndex((row) => row.kind === HUNK_ROW && row.hunk === this.hunk);
+    if (index >= 0) {
+      this.scroller.scroll_to_item(index, "top");
+    }
     cx.notify();
   },
 
   applyHunk(cx) {
-    const v = this.target;
-    const h = this.hunks?.hunks[this.hunk];
-    if (!v || !h || this.applying) return;
-    const unstage = v.scope === "staged";
+    const target = this.target;
+    const hunk = this.hunks?.hunks[this.hunk];
+    if (!target || !hunk || this.applying) {
+      return;
+    }
+    const unstage = target.scope === "staged";
     this.applying = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const patch = hunkPatch(this.hunks.head, h);
+        const patch = hunkPatch(this.hunks.head, hunk);
         const args = [...READ, "apply", "--cached", "--whitespace=nowarn", ...(unstage ? ["--reverse"] : [])];
-        const r = await exec("sh", ["-c", APPLY, "vx-apply", patch, ...args], { cwd: v.root, on: v.on ?? null });
-        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
-        notify({ title: unstage ? "Hunk unstaged" : "Hunk staged", body: v.path, level: "success", timeout: 2000 });
-        bump(v.root);
+        const result = await exec("sh", ["-c", APPLY, "vx-apply", patch, ...args], { cwd: target.root, on: target.on ?? null });
+        if (result.code !== 0) {
+          throw new Error((result.stderr || result.stdout).trim());
+        }
+        notify({ title: unstage ? "Hunk unstaged" : "Hunk staged", body: target.path, level: "success", timeout: SUCCESS_TIMEOUT_MS });
+        bump(target.root);
         this.lastLines = null;
         this.loadingDiff = false;
         this.loadDiff(cx);
-      } catch (e) {
-        notify({ title: `${unstage ? "Unstage" : "Stage"} hunk failed`, body: String(e?.message ?? e).slice(-400), level: "error", timeout: 6000 });
+      } catch (error) {
+        notify({ title: `${unstage ? "Unstage" : "Stage"} hunk failed`, body: String(error?.message ?? error).slice(-ERROR_TAIL), level: "error", timeout: ERROR_TIMEOUT_MS });
       } finally {
         this.applying = false;
         cx.notify();
@@ -158,76 +269,108 @@ export const diffMethods = {
     });
   },
 
-  hunkBar(t) {
-    const n = this.hunks.hunks.length;
+  hunkBar(colors) {
+    const count = this.hunks.hunks.length;
     const unstage = this.target.scope === "staged";
-    const color = unstage ? t.ansi3 : t.ansi2;
+    const color = unstage ? colors.ansi3 : colors.ansi2;
     return h_flex().flex_none().gap(2).items_center()
       .child(IconButton({ id: "h-prev", icon: "up", label: "Previous hunk", size: 20, onClick: (cx) => this.goHunk(-1, cx) }))
-      .child(div().text_size(TEXT.caption).text_color(t.muted).child(`${this.hunk + 1}/${n}`))
+      .child(div().text_size(TEXT.caption).text_color(colors.muted).child(`${this.hunk + 1}/${count}`))
       .child(IconButton({ id: "h-next", icon: "chevron-down", label: "Next hunk", size: 20, onClick: (cx) => this.goHunk(1, cx) }))
       .child(h_flex().id("h-apply").h(22).ml(2).px(8).gap(5).items_center().rounded(6).cursor_pointer()
-        .bg(tint(color, "26")).text_color(color).text_size(TEXT.caption).font_medium().hover((s) => s.bg(tint(color, "40")))
+        .bg(tint(color, "26")).text_color(color).text_size(TEXT.caption).font_medium().hover((style) => style.bg(tint(color, "40")))
         .tooltip(unstage ? "Move this hunk back to the working changes (git apply --cached --reverse)" : "Stage only this hunk (git apply --cached)")
         .on_click((_e, cx) => this.applyHunk(cx))
         .child(this.applying ? Icon("spinner", 11).spin(SPIN_MS) : Icon(unstage ? "minus" : "plus", 11))
         .child(unstage ? "Unstage Hunk" : "Stage Hunk"));
   },
 
-  renderDiff() {
-    const t = theme();
-    const v = this.target;
-    const root = v_flex().id("vx-diff").size_full().min_w(0).min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(TEXT.body);
-    if (!v) return root.child(Message("Pick a file in Changes to see its diff here."));
-    const name = v.path.split("/").pop();
-    const dir = v.path.includes("/") ? v.path.slice(0, v.path.lastIndexOf("/")) : "";
-    root.child(h_flex().h(30).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).text_size(TEXT.small)
-      .child(FileIcon(this.icons, v.path, { size: 14 }))
+  setSplit(split, cx) {
+    this.split = split;
+    localStorage.setItem(SPLIT_KEY, split ? SPLIT_ON : SPLIT_OFF);
+    cx.notify();
+  },
+
+  diffHeader(colors, target) {
+    const name = target.path.split("/").pop();
+    const dir = target.path.includes("/") ? target.path.slice(0, target.path.lastIndexOf("/")) : "";
+    return h_flex().h(30).flex_none().px(10).gap(8).items_center().border_b(1).border_color(colors.border).text_size(TEXT.small)
+      .child(FileIcon(this.icons, target.path, { size: 14 }))
       .child(div().flex_none().max_w(300).truncate().font_medium().child(name))
-      .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(dir))
-      .child(Badge(
-        v.untracked ? "new"
-          : v.scope === "commit" ? `commit ${String(v.sha).slice(0, 8)}`
-          : v.scope === "stash" ? v.ref
-          : v.scope === "compare" ? `${v.base}…${v.head ?? "HEAD"}`
-          : v.scope,
-        v.scope === "staged" ? t.ansi2 : v.scope === "commit" || v.scope === "compare" ? t.accent : t.ansi3))
-      .when(Boolean(v.subject), (el) => el.child(div().max_w(260).truncate().text_color(t.muted).child(v.subject)))
-      .when(Boolean(this.rows), (el) => el.child(div().text_color(t.ansi2).child(`+${this.adds}`)).child(div().text_color(t.ansi1).child(`−${this.dels}`)))
-      .when(Boolean(this.rows && this.hunks?.hunks.length), (el) => el.child(this.hunkBar(t)))
-      .child(IconButton({ id: "d-inline", icon: "inline", label: "Inline", active: !this.split, size: 22, onClick: (cx) => { this.split = false; localStorage.setItem("split", "0"); cx.notify(); } }))
-      .child(IconButton({ id: "d-split", icon: "split", label: "Side by side", active: this.split, size: 22, onClick: (cx) => { this.split = true; localStorage.setItem("split", "1"); cx.notify(); } })));
-    if (this.problem) return root.child(Message(this.problem));
-    if (!this.rows) return root.child(Message("Loading…"));
-    const C = syntaxColors(t);
-    const lang = languageOf(v.path);
+      .child(div().flex_1().min_w(0).truncate().text_color(colors.dim).child(dir))
+      .child(Badge(scopeLabel(target), scopeColor(colors, target.scope)))
+      .when(Boolean(target.subject), (el) => el.child(div().max_w(260).truncate().text_color(colors.muted).child(target.subject)))
+      .when(Boolean(this.rows), (el) => el.child(div().text_color(colors.ansi2).child(`+${this.adds}`)).child(div().text_color(colors.ansi1).child(`−${this.dels}`)))
+      .when(Boolean(this.rows && this.hunks?.hunks.length), (el) => el.child(this.hunkBar(colors)))
+      .child(IconButton({ id: "d-inline", icon: "inline", label: "Inline", active: !this.split, size: 22, onClick: (cx) => this.setSplit(false, cx) }))
+      .child(IconButton({ id: "d-split", icon: "split", label: "Side by side", active: this.split, size: 22, onClick: (cx) => this.setSplit(true, cx) }));
+  },
+
+  hunkHeaderRow(colors, row, height) {
+    const selected = this.hunks && row.hunk === this.hunk;
+    return h_flex().h(height).w_full().px(10).gap(8).items_center().bg(selected ? tint(colors.accent, "2a") : colors.raised).text_color(colors.accent)
+      .when(Boolean(selected), (el) => el.border_l_2().border_color(colors.accent))
+      .child(div().flex_1().min_w(0).truncate().child(row.text))
+      .when(Boolean(this.hunks), (el) => el.child(div().flex_none().text_size(TEXT.caption).text_color(selected ? colors.accent : colors.dim)
+        .child(selected ? "● selected hunk" : "click to select")));
+  },
+
+  diffRow(colors, syntax, lang, height, row) {
+    if (row.kind === HUNK_ROW) {
+      return this.hunkHeaderRow(colors, row, height);
+    }
+    if (row.kind === "") {
+      return h_flex().h(height).w_full().px(10).items_center().text_color(colors.dim).child(row.text);
+    }
+    if (this.split) {
+      return h_flex().h(height).w_full().child(this.cell(colors, syntax, row.left, lang, "left")).child(div().w(1).h_full().bg(colors.border)).child(this.cell(colors, syntax, row.right, lang, "right"));
+    }
+    return h_flex().h(height).w_full().child(this.cell(colors, syntax, row, lang, "inline"));
+  },
+
+  selectHunkByKey(key, cx) {
+    if (!key.startsWith(HUNK_KEY_PREFIX) || !this.hunks) {
+      return;
+    }
+    this.hunk = Number(key.slice(HUNK_KEY_PREFIX.length));
+    cx.notify();
+  },
+
+  diffBody(colors, target) {
+    const syntax = syntaxColors(colors);
+    const lang = languageOf(target.path);
     const size = codeSize();
-    const height = Math.round(size * 1.55);
+    const height = Math.round(size * LINE_HEIGHT_FACTOR);
     const items = this.split ? this.pairs : this.rows;
     const listId = `diff-${this.diffKey}-${this.split ? "s" : "i"}`;
-    const draw = (r) => {
-      if (r.kind === "@") {
-        const sel = this.hunks && r.hunk === this.hunk;
-        return h_flex().h(height).w_full().px(10).gap(8).items_center().bg(sel ? tint(t.accent, "2a") : t.raised).text_color(t.accent)
-          .when(Boolean(sel), (el) => el.border_l_2().border_color(t.accent))
-          .child(div().flex_1().min_w(0).truncate().child(r.text))
-          .when(Boolean(this.hunks), (el) => el.child(div().flex_none().text_size(TEXT.caption).text_color(sel ? t.accent : t.dim)
-            .child(sel ? "● selected hunk" : "click to select")));
-      }
-      if (r.kind === "") return h_flex().h(height).w_full().px(10).items_center().text_color(t.dim).child(r.text);
-      if (this.split) return h_flex().h(height).w_full().child(this.cell(t, C, r.left, lang, "left")).child(div().w(1).h_full().bg(t.border)).child(this.cell(t, C, r.right, lang, "right"));
-      return h_flex().h(height).w_full().child(this.cell(t, C, r, lang, "inline"));
-    };
-    root.child(div().id("d-body").flex_1().min_h(0).relative().font_family(codeFont()).text_size(size)
-      .child(v_virtual_list(listId, items.length, height, (i) => (items[i]?.kind === "@" ? `h${items[i].hunk}` : `r${i}`), (range) => items.slice(range.start, range.end).map(draw))
+    const itemKey = (index) => (items[index]?.kind === HUNK_ROW ? `${HUNK_KEY_PREFIX}${items[index].hunk}` : `r${index}`);
+    const drawRange = (range) => items.slice(range.start, range.end).map((row) => this.diffRow(colors, syntax, lang, height, row));
+    return div().id("d-body").flex_1().min_h(0).relative().font_family(codeFont()).text_size(size)
+      .child(v_virtual_list(listId, items.length, height, itemKey, drawRange)
         .track_scroll(this.scroller)
-        .on_item_click((key, cx) => {
-          if (!key.startsWith("h") || !this.hunks) return;
-          this.hunk = Number(key.slice(1));
-          cx.notify();
-        }).size_full())
-      .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0()));
-    if (this.truncated) root.child(Message(`Showing the first ${MAX_ROWS} lines of the diff.`));
+        .on_item_click((key, cx) => this.selectHunkByKey(key, cx))
+        .size_full())
+      .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0());
+  },
+
+  renderDiff() {
+    const colors = theme();
+    const target = this.target;
+    const root = v_flex().id("vx-diff").size_full().min_w(0).min_h(0).overflow_hidden().bg(colors.background).text_color(colors.foreground).text_size(TEXT.body);
+    if (!target) {
+      return root.child(Message("Pick a file in Changes to see its diff here."));
+    }
+    root.child(this.diffHeader(colors, target));
+    if (this.problem) {
+      return root.child(Message(this.problem));
+    }
+    if (!this.rows) {
+      return root.child(Message("Loading…"));
+    }
+    root.child(this.diffBody(colors, target));
+    if (this.truncated) {
+      root.child(Message(`Showing the first ${MAX_ROWS} lines of the diff.`));
+    }
     return root;
   },
 };

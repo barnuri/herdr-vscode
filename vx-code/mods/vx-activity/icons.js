@@ -1,11 +1,12 @@
-// Loads vx-icons' table once per copy. Pass the view: it sets view.icons and redraws.
 import { appHome, readTextFile } from "herdr";
+
+const ICON_TABLE = "mods/vx-icons/icons.json";
 
 export function loadIcons(view, cx) {
   view.icons ??= null;
   cx.spawn(async (cx) => {
     try {
-      view.icons = JSON.parse((await readTextFile(`${appHome()}/mods/vx-icons/icons.json`)) ?? "null");
+      view.icons = JSON.parse((await readTextFile(`${appHome()}/${ICON_TABLE}`)) ?? "null");
     } catch {
       view.icons = null;
     }

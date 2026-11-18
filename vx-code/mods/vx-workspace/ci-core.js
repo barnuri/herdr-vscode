@@ -1,131 +1,175 @@
-// CI runs from GitLab (pipelines) and GitHub (Actions runs) as one shape. Pure: tested under node.
+// CI runs from GitLab (pipelines) and GitHub (Actions runs) as one shape.
 //   run = { id, number, title, ref, sha, kind, label, created, started, finished, url, event, actor, workflow }
 //   job = { id, name, stage, kind, label, started, finished, seconds, url, artifacts }
-// kind: running | queued | success | failure | warning | canceled | skipped | manual
 
-const GL = {
+const GITLAB_KINDS = {
   running: "running", created: "queued", waiting_for_resource: "queued", preparing: "queued",
   pending: "queued", scheduled: "queued", success: "success", failed: "failure",
   canceled: "canceled", canceling: "canceled", skipped: "skipped", manual: "manual",
 };
+const GITHUB_CONCLUSION_KINDS = {
+  success: "success", failure: "failure", timed_out: "failure", startup_failure: "failure",
+  cancelled: "canceled", skipped: "skipped", action_required: "manual", neutral: "skipped", stale: "skipped",
+};
+const LABELS = {
+  running: "running", queued: "queued", success: "passed", failure: "failed",
+  warning: "passed with warnings", canceled: "canceled", skipped: "skipped", manual: "manual",
+};
+const ACTIVE_KINDS = ["running", "queued"];
+const DEFAULT_STAGE = "jobs";
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+const SINCE_UNITS = [["d", 86400], ["h", 3600], ["m", 60]];
+const TRAILING_COMMENT = /\s+#.*$/;
+const VARIABLE_LINE = /^\s*([A-Za-z_][\w.-]*):\s*(.*?)\s*$/;
 
 export function glKind(status, allowFailure = false) {
-  const k = GL[status] ?? "queued";
-  return k === "failure" && allowFailure ? "warning" : k;
+  const kind = GITLAB_KINDS[status] ?? "queued";
+  return kind === "failure" && allowFailure ? "warning" : kind;
 }
 
 export function ghKind(status, conclusion) {
-  if (status === "in_progress") return "running";
-  if (status && status !== "completed") return "queued";
-  return {
-    success: "success", failure: "failure", timed_out: "failure", startup_failure: "failure",
-    cancelled: "canceled", skipped: "skipped", action_required: "manual", neutral: "skipped", stale: "skipped",
-  }[conclusion] ?? "skipped";
+  if (status === "in_progress") {
+    return "running";
+  }
+  if (status && status !== "completed") {
+    return "queued";
+  }
+  return GITHUB_CONCLUSION_KINDS[conclusion] ?? "skipped";
 }
 
-const LABEL = { running: "running", queued: "queued", success: "passed", failure: "failed", warning: "passed with warnings", canceled: "canceled", skipped: "skipped", manual: "manual" };
-export const labelOf = (kind) => LABEL[kind] ?? kind;
-export const isDone = (kind) => !["running", "queued"].includes(kind);
+export const labelOf = (kind) => LABELS[kind] ?? kind;
+export const isDone = (kind) => !ACTIVE_KINDS.includes(kind);
 
-export function glRun(p) {
-  const kind = glKind(p.status);
+export function glRun(pipeline) {
+  const kind = glKind(pipeline.status);
   return {
-    id: p.id, number: p.iid ?? p.id, title: p.name || p.commit?.title || null, ref: p.ref, sha: p.sha,
-    kind, label: labelOf(kind), created: p.created_at, started: p.started_at ?? null, finished: p.finished_at ?? null,
-    url: p.web_url, event: p.source ?? null, actor: p.user?.username ?? null, workflow: null,
+    id: pipeline.id, number: pipeline.iid ?? pipeline.id, title: pipeline.name || pipeline.commit?.title || null,
+    ref: pipeline.ref, sha: pipeline.sha, kind, label: labelOf(kind), created: pipeline.created_at,
+    started: pipeline.started_at ?? null, finished: pipeline.finished_at ?? null, url: pipeline.web_url,
+    event: pipeline.source ?? null, actor: pipeline.user?.username ?? null, workflow: null,
   };
 }
 
-export function glJob(j) {
-  const kind = glKind(j.status, j.allow_failure);
+export function glJob(job) {
+  const kind = glKind(job.status, job.allow_failure);
   return {
-    id: j.id, name: j.name, stage: j.stage ?? "jobs", kind, label: labelOf(kind),
-    started: j.started_at ?? null, finished: j.finished_at ?? null, seconds: j.duration ?? null, url: j.web_url,
-    artifacts: (j.artifacts ?? []).some((a) => a.file_type === "archive"),
+    id: job.id, name: job.name, stage: job.stage ?? DEFAULT_STAGE, kind, label: labelOf(kind),
+    started: job.started_at ?? null, finished: job.finished_at ?? null, seconds: job.duration ?? null, url: job.web_url,
+    artifacts: (job.artifacts ?? []).some((artifact) => artifact.file_type === "archive"),
   };
 }
 
-export function ghRun(r) {
-  const kind = ghKind(r.status, r.conclusion);
+export function ghRun(run) {
+  const kind = ghKind(run.status, run.conclusion);
   return {
-    id: r.id, number: r.run_number, title: r.display_title ?? r.name, ref: r.head_branch, sha: r.head_sha,
-    kind, label: labelOf(kind), created: r.created_at, started: r.run_started_at ?? null,
-    finished: isDone(kind) ? r.updated_at : null, url: r.html_url, event: r.event, actor: r.actor?.login ?? null, workflow: r.name,
+    id: run.id, number: run.run_number, title: run.display_title ?? run.name, ref: run.head_branch, sha: run.head_sha,
+    kind, label: labelOf(kind), created: run.created_at, started: run.run_started_at ?? null,
+    finished: isDone(kind) ? run.updated_at : null, url: run.html_url, event: run.event, actor: run.actor?.login ?? null,
+    workflow: run.name,
   };
 }
 
-export function ghJob(j) {
-  const kind = ghKind(j.status, j.conclusion);
-  const s = j.started_at ? Date.parse(j.started_at) : null;
-  const f = j.completed_at ? Date.parse(j.completed_at) : null;
+export function ghJob(job) {
+  const kind = ghKind(job.status, job.conclusion);
+  const startedMs = job.started_at ? Date.parse(job.started_at) : null;
+  const finishedMs = job.completed_at ? Date.parse(job.completed_at) : null;
   return {
-    id: j.id, name: j.name, stage: j.workflow_name ?? "jobs", kind, label: labelOf(kind),
-    started: j.started_at ?? null, finished: j.completed_at ?? null, seconds: s && f ? (f - s) / 1000 : null, url: j.html_url, artifacts: false,
+    id: job.id, name: job.name, stage: job.workflow_name ?? DEFAULT_STAGE, kind, label: labelOf(kind),
+    started: job.started_at ?? null, finished: job.completed_at ?? null,
+    seconds: startedMs && finishedMs ? (finishedMs - startedMs) / MS_PER_SECOND : null, url: job.html_url, artifacts: false,
   };
 }
 
 // Jobs grouped by stage, in first-seen stage order (GitLab returns newest first, so reverse).
 export function byStage(jobs) {
-  const order = [];
-  const map = new Map();
-  for (const j of jobs) {
-    if (!map.has(j.stage)) {
-      map.set(j.stage, []);
-      order.push(j.stage);
+  const stages = new Map();
+  for (const job of jobs) {
+    if (!stages.has(job.stage)) {
+      stages.set(job.stage, []);
     }
-    map.get(j.stage).push(j);
+    stages.get(job.stage).push(job);
   }
-  return order.map((stage) => ({ stage, jobs: map.get(stage) }));
+  return [...stages].map(([stage, stageJobs]) => ({ stage, jobs: stageJobs }));
 }
 
 export function duration(seconds) {
-  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "";
-  const s = Math.round(seconds);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return "";
+  }
+  const totalSeconds = Math.round(seconds);
+  if (totalSeconds < SECONDS_PER_MINUTE) {
+    return `${totalSeconds}s`;
+  }
+  const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+  if (minutes < MINUTES_PER_HOUR) {
+    return `${minutes}m ${totalSeconds % SECONDS_PER_MINUTE}s`;
+  }
+  return `${Math.floor(minutes / MINUTES_PER_HOUR)}h ${minutes % MINUTES_PER_HOUR}m`;
 }
 
 export function since(iso, now = Date.now()) {
-  if (!iso) return "";
-  const s = Math.max(0, (now - Date.parse(iso)) / 1000);
-  for (const [u, n] of [["d", 86400], ["h", 3600], ["m", 60]]) if (s >= n) return `${Math.floor(s / n)}${u} ago`;
-  return "just now";
+  if (!iso) {
+    return "";
+  }
+  const elapsed = Math.max(0, (now - Date.parse(iso)) / MS_PER_SECOND);
+  const unit = SINCE_UNITS.find(([, size]) => elapsed >= size);
+  return unit ? `${Math.floor(elapsed / unit[1])}${unit[0]} ago` : "just now";
 }
 
-const unquote = (v) => {
-  const s = String(v ?? "").trim();
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) return s.slice(1, -1);
-  return s;
-};
+function unquote(value) {
+  const text = String(value ?? "").trim();
+  const quoted = (text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"));
+  return quoted ? text.slice(1, -1) : text;
+}
+
+function topLevelVariable(key, rawValue) {
+  const value = rawValue && !rawValue.startsWith("#") ? unquote(rawValue.replace(TRAILING_COMMENT, "")) : "";
+  return { key, value, description: null, options: null };
+}
+
+function readVariableField(variable, field, rawValue) {
+  const value = rawValue.replace(TRAILING_COMMENT, "");
+  if (field === "value") {
+    variable.value = unquote(value);
+  } else if (field === "description") {
+    variable.description = unquote(value);
+  } else if (field === "options") {
+    variable.options = value.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean);
+  }
+}
 
 // Top-level `variables:` of a .gitlab-ci.yml: [{ key, value, description, options }].
 // Enough YAML for that block: `KEY: value`, or `KEY:` with value/description/options under it.
 export function gitlabVariables(yaml) {
   const lines = String(yaml ?? "").replace(/\r/g, "").split("\n");
-  const start = lines.findIndex((l) => /^variables:\s*(#.*)?$/.test(l));
-  if (start < 0) return [];
-  const out = [];
-  let cur = null;
+  const start = lines.findIndex((line) => /^variables:\s*(#.*)?$/.test(line));
+  if (start < 0) {
+    return [];
+  }
+  const variables = [];
+  let current = null;
   let indent = null;
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim() || /^\s*#/.test(line)) continue;
+  for (const line of lines.slice(start + 1)) {
+    if (!line.trim() || /^\s*#/.test(line)) {
+      continue;
+    }
     const lead = line.length - line.trimStart().length;
-    if (lead === 0) break;
+    if (lead === 0) {
+      break;
+    }
     indent ??= lead;
-    const m = /^\s*([A-Za-z_][\w.-]*):\s*(.*?)\s*$/.exec(line);
-    if (!m) continue;
+    const match = VARIABLE_LINE.exec(line);
+    if (!match) {
+      continue;
+    }
     if (lead === indent) {
-      cur = { key: m[1], value: m[2] && !m[2].startsWith("#") ? unquote(m[2].replace(/\s+#.*$/, "")) : "", description: null, options: null };
-      out.push(cur);
-    } else if (cur && lead > indent) {
-      const v = m[2].replace(/\s+#.*$/, "");
-      if (m[1] === "value") cur.value = unquote(v);
-      else if (m[1] === "description") cur.description = unquote(v);
-      else if (m[1] === "options") cur.options = v.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean);
+      current = topLevelVariable(match[1], match[2]);
+      variables.push(current);
+    } else if (current && lead > indent) {
+      readVariableField(current, match[1], match[2]);
     }
   }
-  return out;
+  return variables;
 }

@@ -40,7 +40,7 @@ test("initials, statBlocks, subjectInfo", () => {
   assert.deepEqual(statBlocks(0, 0), [" ", " ", " ", " ", " "]);
   assert.deepEqual(statBlocks(3, 0), ["+", " ", " ", " ", " "]);
   const big = statBlocks(400, 400);
-  assert.equal(big.filter((b) => b === "+").length + big.filter((b) => b === "-").length, 5);
+  assert.equal(big.filter((block) => block === "+").length + big.filter((block) => block === "-").length, 5);
   assert.ok(statBlocks(1, 1).includes("-"));
   assert.deepEqual(subjectInfo("fix: short"), { len: 10, level: "ok" });
   assert.equal(subjectInfo("x".repeat(60)).level, "long");

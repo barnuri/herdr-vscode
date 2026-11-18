@@ -1,52 +1,111 @@
-// The preview tab: one per space, showing the file last picked in Files. Code is drawn as rows
-// with syntax colours and a bar on lines changed since HEAD; Markdown renders (Code toggles it
-// back); images show through a copy in this mod's cache (image() loads only from Herdr's folder).
-// Edit (✎) swaps the rows for Herdr's code editor; ⌘S saves (vx-files.save), refusing to
-// overwrite a file that changed on disk. Editing keeps the tab (it stops being the reused
-// preview), and the tab bar shows a dot while there are unsaved changes (shared "vx.dirty").
-// A viewer value with { line } (Search, Problems) selects and scrolls to that line.
 import { div, image } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, Scrollbar, TextView, VirtualListScrollHandle, EditorState, Editor } from "gpui-base";
-import { theme, readTextFile, writeTextFile, exec, appHome, settings, shared, setShared, notify } from "herdr";
+import { theme, readTextFile, writeTextFile, exec, appHome, shared, setShared, notify } from "herdr";
 import { git, bump } from "./ws.js";
 import { parseBlame, heat, shortAge, NOT_COMMITTED } from "./blame-core.js";
-import { parseLog, LOG_FORMAT } from "./git-core.js";
-import { showInViewer } from "./tabs.js";
-import { parseHunks } from "./git-core.js";
+import { parseLog, LOG_FORMAT, parseHunks } from "./git-core.js";
 import { lexLines, languageOf, syntaxColors } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, codeFont, codeSize, tint } from "./ui.js";
-import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
-
-const BLAME_W = 230;
+import { viewerValue, viewerTab, keptTabs, showInViewer } from "./tabs.js";
 
 const MOD = "vx-files";
+const BLAME_W = 230;
 const POLL_MS = 2000;
 const MAX_LINES = 20000;
+const MAX_LEXED_LINES = 6000;
+const TAB_SPACES = "    ";
+const MAX_CACHE_NAME = 150;
+const FILE_HISTORY_COUNT = 100;
+const LINE_HISTORY_COUNT = 50;
+const MS_PER_SECOND = 1000;
+const ISO_DATE_LENGTH = 10;
+const SHORT_SHA = 8;
+const LINE_HEIGHT_RATIO = 1.55;
+const GUTTER_RATIO = 3.6;
+const GUTTER_PAD_RATIO = 0.9;
+const CHAR_WIDTH_RATIO = 0.62;
+const MIN_CODE_WIDTH = 300;
+const MIN_BLAME_TEXT = 10;
+const ADDED_LINE_ALPHA = "1c";
+const SAVED_TOAST_MS = 1500;
+const UNSAVED_TOAST_MS = 3000;
+const SAVE_ERROR_TOAST_MS = 8000;
+const HEAT_STEPS = [[0.9, "ansi1"], [0.7, "ansi3"], [0.45, "ansi2"], [0.2, "ansi4"]];
+const DIRTY_KEY = "vx.dirty";
+const KEPT_KEY = "vx.tabs.kept";
+const VIEW_KEY = `${MOD}.view`;
+const BLAME_KEY = "blame";
+const HISTORY_FILE = "file";
+const HISTORY_LINE = "line";
+const UNTRACKED_HUNK = { newStart: 1, fresh: Infinity, kind: "added" };
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|ico)$/i;
 const MARKDOWN = /\.(md|markdown|mdx)$/i;
+const NO_BLAME = /no such path|not in the working tree|fatal: no such ref/i;
+const STALE_WRITE = /stale|changed|expected/i;
 // $1 source, $2 copy: copy only when different, so an unchanged image never reloads.
 const COPY = 'mkdir -p -- "$(dirname -- "$2")" && { cmp -s -- "$1" "$2" || cp -- "$1" "$2"; }';
 
+const fileName = (rel) => rel.split("/").pop();
+
+const parentFolder = (rel) => (rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
+
+const commitDiffValue = (file, sha, subject) => ({ root: file.root, on: file.on ?? null, path: file.rel, scope: "commit", sha, subject });
+
+function cachePathFor(abs) {
+  return `mods/${MOD}/cache/${encodeURIComponent(abs).replace(/%/g, "_").slice(-MAX_CACHE_NAME)}`;
+}
+
+function markBarColor(t, mark) {
+  const colors = { added: t.ansi2, changed: t.ansi3, removed: t.ansi1 };
+  return colors[mark] ?? null;
+}
+
+function blameText(blame) {
+  if (NOT_COMMITTED.test(blame.sha)) {
+    return "You · Not committed yet";
+  }
+  return `${blame.author} · ${shortAge(blame.time)} · ${blame.summary}`;
+}
+
+function blameErrorText(stderr) {
+  if (NO_BLAME.test(stderr)) {
+    return "Not committed yet: no blame.";
+  }
+  return stderr.trim() || "No blame here.";
+}
+
+function toolbarLink(t, id, label, onClick, primary) {
+  return div().id(id).px(8).h(22).flex().items_center().rounded(5).cursor_pointer().text_size(TEXT.caption)
+    .when(primary, (el) => el.bg(t.solid ?? t.accent).text_color(t.solid_foreground ?? t.accent_foreground))
+    .when(!primary, (el) => el.text_color(t.muted).hover((style) => style.bg(t.hover)))
+    .on_click((_event, cx) => onClick(cx)).child(label);
+}
+
 export const previewMethods = {
-  initPreview(p, cx) {
-    this.viewSpace = p.space;
+  initPreview(initProps, cx) {
+    this.viewSpace = initProps.space;
     // A tab opened directly (herdr-app do tab.new --mod vx-files --props {...}) names its file.
-    this.propsFile = p.file?.root && p.file?.rel ? p.file : null;
+    this.propsFile = initProps.file?.root && initProps.file?.rel ? initProps.file : null;
     // A kept tab (props.fixed) shows its own file and never follows the space's preview.
-    this.fixed = Boolean(p.fixed && this.propsFile);
+    this.fixed = Boolean(initProps.fixed && this.propsFile);
     this.scroller = VirtualListScrollHandle.new();
     this.mdCode = false;
-    this.blameOn = p.blame === true || localStorage.getItem("blame") === "1";
-    if (Number.isInteger(p.line)) this.selLine = p.line;
-    if (p.history === "file" || p.history === "line") this.wantHistory = p.history;
+    this.blameOn = initProps.blame === true || localStorage.getItem(BLAME_KEY) === "1";
+    if (Number.isInteger(initProps.line)) {
+      this.selLine = initProps.line;
+    }
+    if (initProps.history === HISTORY_FILE || initProps.history === HISTORY_LINE) {
+      this.wantHistory = initProps.history;
+    }
     cx.timer.every(POLL_MS, (cx) => this.syncPreview(cx, true));
     this.syncPreview(cx);
   },
 
-  // This copy's tab: the space's reused preview tab, until it's kept (in place: from then on it
-  // shows its own file and the next preview opens a new tab).
+  // Once the space's reused preview tab is kept, it shows its own file and the next preview opens a new tab.
   followKept() {
-    if (this.fixed) return;
+    if (this.fixed) {
+      return;
+    }
     this.myTab ??= viewerTab(MOD, this.viewSpace);
     const kept = this.myTab ? keptTabs()[this.myTab] : null;
     if (kept?.value?.rel) {
@@ -56,105 +115,81 @@ export const previewMethods = {
   },
 
   keepTab() {
-    if (this.fixed || !this.file) return;
+    if (this.fixed || !this.file) {
+      return;
+    }
     this.myTab ??= viewerTab(MOD, this.viewSpace);
-    if (!this.myTab) return;
+    if (!this.myTab) {
+      return;
+    }
     const value = { root: this.file.root, on: this.file.on ?? null, rel: this.file.rel };
-    setShared("vx.tabs.kept", { ...keptTabs(), [this.myTab]: { mod: MOD, value } });
+    setShared(KEPT_KEY, { ...keptTabs(), [this.myTab]: { mod: MOD, value } });
     this.fixed = true;
     this.propsFile = value;
   },
 
+  // A tab opened onto a file shares it as the space's preview, so the tab bar, breadcrumbs and Timeline see it.
+  sharePropsFile() {
+    if (this.fixed || !this.propsFile || viewerValue(MOD, this.viewSpace) || !this.viewSpace) {
+      return;
+    }
+    setShared(VIEW_KEY, { ...(shared(VIEW_KEY) ?? {}), [this.viewSpace]: { ...this.propsFile, at: Date.now() } });
+  },
+
+  resetFile(value, key) {
+    this.fileKey = key;
+    this.file = value;
+    this.text = undefined;
+    this.problem = null;
+    this.lines = null;
+    this.hunks = [];
+    this.mdCode = false;
+    this.selLine = this.firstFileSeen ? null : this.selLine ?? null;
+    this.editor = null;
+    this.firstFileSeen = true;
+    this.blame = null;
+    this.heat = null;
+    this.blameError = null;
+    if (this.history) {
+      this.history = this.history.kind === HISTORY_FILE ? { kind: HISTORY_FILE, items: null } : null;
+    }
+  },
+
   syncPreview(cx, poll = false) {
     this.followKept();
-    // Opened straight onto a file (tab.new with props.file): share it as the space's preview, so
-    // the tab bar, breadcrumbs and Timeline see it.
-    if (!this.fixed && this.propsFile && !viewerValue(MOD, this.viewSpace) && this.viewSpace)
-      setShared(`${MOD}.view`, { ...(shared(`${MOD}.view`) ?? {}), [this.viewSpace]: { ...this.propsFile, at: Date.now() } });
-    const v = this.fixed ? this.propsFile : viewerValue(MOD, this.viewSpace) ?? this.propsFile;
-    if (!v?.rel) return;
-    // A jump to a line (Search, Problems): select it and scroll there once the text is in.
-    if (Number.isInteger(v.line) && v.at && v.at !== this.jumpAt && !this.fixed) {
-      this.jumpAt = v.at;
-      this.jumpLine = v.line;
+    this.sharePropsFile();
+    const value = this.fixed ? this.propsFile : viewerValue(MOD, this.viewSpace) ?? this.propsFile;
+    if (!value?.rel) {
+      return;
     }
-    const key = `${v.on ?? ""}|${v.root}/${v.rel}`;
+    if (Number.isInteger(value.line) && value.at && value.at !== this.jumpAt && !this.fixed) {
+      this.jumpAt = value.at;
+      this.jumpLine = value.line;
+    }
+    const key = `${value.on ?? ""}|${value.root}/${value.rel}`;
     if (key !== this.fileKey) {
-      this.fileKey = key;
-      this.file = v;
-      this.text = undefined;
-      this.problem = null;
-      this.lines = null;
-      this.hunks = [];
-      this.mdCode = false;
-      this.selLine = this.firstFileSeen ? null : this.selLine ?? null;
-      this.editor = null;
-      this.firstFileSeen = true;
-      this.blame = null;
-      this.heat = null;
-      this.blameError = null;
-      if (this.history) this.history = this.history.kind === "file" ? { kind: "file", items: null } : null;
-    } else if (!poll) return;
+      this.resetFile(value, key);
+    } else if (!poll) {
+      return;
+    }
     this.readPreview(cx);
   },
 
   readPreview(cx) {
-    const f = this.file;
-    if (!f || this.readingPreview) return;
+    const file = this.file;
+    if (!file || this.readingPreview) {
+      return;
+    }
     this.readingPreview = true;
-    const abs = `${f.root}/${f.rel}`;
     cx.spawn(async (cx) => {
       try {
-        if (IMAGE.test(f.rel)) {
-          if (f.on) this.problem = "Images on another machine can't be shown here.";
-          else {
-            const copy = `mods/${MOD}/cache/${encodeURIComponent(abs).replace(/%/g, "_").slice(-150)}`;
-            const r = await exec("sh", ["-c", COPY, "vx-copy", abs, `${appHome()}/${copy}`]);
-            this.problem = r.code === 0 ? null : "This file is no longer there.";
-            this.imageCopy = r.code === 0 ? copy : null;
-          }
+        if (IMAGE.test(file.rel)) {
+          await this.readImage(file);
           return;
         }
-        let text = null;
-        try {
-          text = await readTextFile(abs, { on: f.on });
-        } catch {
-          this.problem = "Too large or unreadable to preview.";
-          return;
+        if (await this.readText(file, cx)) {
+          await this.loadHunks(file);
         }
-        if (this.jumpLine && text === this.text && this.lines) {
-          this.selLine = Math.min(this.jumpLine, this.lines.length);
-          this.scroller.scroll_to_item(this.selLine - 1, "center");
-          this.jumpLine = null;
-        }
-        if (text === null) this.problem = "This file is no longer there.";
-        else if (text.includes("\0")) this.problem = "Binary file.";
-        else if (text !== this.text) {
-          this.problem = null;
-          this.text = text;
-          const all = text.replace(/\r/g, "").replace(/\t/g, "    ").split("\n");
-          this.lines = all.slice(0, MAX_LINES);
-          this.truncated = all.length > MAX_LINES;
-          this.runs = this.lines.length <= 6000 ? lexLines(this.lines, languageOf(f.rel)) : null;
-          if (this.blameOn) this.loadBlame(cx);
-          if (this.history?.kind === "file" && !this.history.items) this.openHistory("file", cx);
-          if (this.jumpLine) {
-            this.selLine = Math.min(this.jumpLine, this.lines.length);
-            this.scroller.scroll_to_item(this.selLine - 1, "center");
-            this.jumpLine = null;
-          }
-          if (this.wantHistory) {
-            this.openHistory(this.wantHistory, cx);
-            this.wantHistory = null;
-          }
-        }
-        // Changed lines since HEAD (an untracked file is all new).
-        const st = await git(["status", "--porcelain", "--", f.rel], { cwd: f.root, on: f.on }).catch(() => null);
-        if (st?.code === 0 && st.stdout.startsWith("??")) this.hunks = [{ newStart: 1, fresh: Infinity, kind: "added" }];
-        else if (st?.code === 0 && st.stdout.trim()) {
-          const d = await git(["diff", "-U0", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--", f.rel], { cwd: f.root, on: f.on }).catch(() => null);
-          this.hunks = d?.code === 0 ? parseHunks(d.stdout) : [];
-        } else this.hunks = [];
       } finally {
         this.readingPreview = false;
         cx.notify();
@@ -162,27 +197,111 @@ export const previewMethods = {
     });
   },
 
-  // ── GitLens: blame, heatmap, file and line history ─────────────────────────────────────
+  async readImage(file) {
+    if (file.on) {
+      this.problem = "Images on another machine can't be shown here.";
+      return;
+    }
+    const abs = `${file.root}/${file.rel}`;
+    const copy = cachePathFor(abs);
+    const result = await exec("sh", ["-c", COPY, "vx-copy", abs, `${appHome()}/${copy}`]);
+    this.problem = result.code === 0 ? null : "This file is no longer there.";
+    this.imageCopy = result.code === 0 ? copy : null;
+  },
+
+  applyJump() {
+    if (!this.jumpLine) {
+      return;
+    }
+    this.selLine = Math.min(this.jumpLine, this.lines.length);
+    this.scroller.scroll_to_item(this.selLine - 1, "center");
+    this.jumpLine = null;
+  },
+
+  // Returns false when the file could not be read at all.
+  async readText(file, cx) {
+    let text = null;
+    try {
+      text = await readTextFile(`${file.root}/${file.rel}`, { on: file.on });
+    } catch {
+      this.problem = "Too large or unreadable to preview.";
+      return false;
+    }
+    if (text === this.text && this.lines) {
+      this.applyJump();
+    }
+    if (text === null) {
+      this.problem = "This file is no longer there.";
+    } else if (text.includes("\0")) {
+      this.problem = "Binary file.";
+    } else if (text !== this.text) {
+      this.applyText(file, text, cx);
+    }
+    return true;
+  },
+
+  applyText(file, text, cx) {
+    this.problem = null;
+    this.text = text;
+    const all = text.replace(/\r/g, "").replace(/\t/g, TAB_SPACES).split("\n");
+    this.lines = all.slice(0, MAX_LINES);
+    this.truncated = all.length > MAX_LINES;
+    this.runs = this.lines.length <= MAX_LEXED_LINES ? lexLines(this.lines, languageOf(file.rel)) : null;
+    if (this.blameOn) {
+      this.loadBlame(cx);
+    }
+    if (this.history?.kind === HISTORY_FILE && !this.history.items) {
+      this.openHistory(HISTORY_FILE, cx);
+    }
+    this.applyJump();
+    if (this.wantHistory) {
+      this.openHistory(this.wantHistory, cx);
+      this.wantHistory = null;
+    }
+  },
+
+  // Changed lines since HEAD; an untracked file is all new.
+  async loadHunks(file) {
+    const options = { cwd: file.root, on: file.on };
+    const status = await git(["status", "--porcelain", "--", file.rel], options).catch(() => null);
+    if (status?.code !== 0 || !status.stdout.trim()) {
+      this.hunks = [];
+      return;
+    }
+    if (status.stdout.startsWith("??")) {
+      this.hunks = [UNTRACKED_HUNK];
+      return;
+    }
+    const diff = await git(["diff", "-U0", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--", file.rel], options).catch(() => null);
+    this.hunks = diff?.code === 0 ? parseHunks(diff.stdout) : [];
+  },
+
   toggleBlame(cx) {
     this.blameOn = !this.blameOn;
-    localStorage.setItem("blame", this.blameOn ? "1" : "0");
-    if (this.blameOn) this.loadBlame(cx);
+    localStorage.setItem(BLAME_KEY, this.blameOn ? "1" : "0");
+    if (this.blameOn) {
+      this.loadBlame(cx);
+    }
     cx.notify();
   },
 
   loadBlame(cx) {
-    const f = this.file;
-    if (!f) return;
+    const file = this.file;
+    if (!file) {
+      return;
+    }
     cx.spawn(async (cx) => {
-      const r = await git(["blame", "--porcelain", "--", f.rel], { cwd: f.root, on: f.on }).catch(() => null);
-      if (this.file !== f) return;
-      if (r?.code === 0) {
-        this.blame = parseBlame(r.stdout);
+      const result = await git(["blame", "--porcelain", "--", file.rel], { cwd: file.root, on: file.on }).catch(() => null);
+      if (this.file !== file) {
+        return;
+      }
+      if (result?.code === 0) {
+        this.blame = parseBlame(result.stdout);
         this.heat = heat(this.blame);
         this.blameError = null;
       } else {
         this.blame = null;
-        this.blameError = /no such path|not in the working tree|fatal: no such ref/i.test(r?.stderr ?? "") ? "Not committed yet: no blame." : (r?.stderr ?? "").trim() || "No blame here.";
+        this.blameError = blameErrorText(result?.stderr ?? "");
       }
       cx.notify();
     });
@@ -190,136 +309,205 @@ export const previewMethods = {
 
   // kind "file": commits that touched this file (following renames); "line": the selected line.
   openHistory(kind, cx) {
-    const f = this.file;
-    if (!f || (kind === "line" && !this.selLine)) return;
+    const file = this.file;
+    if (!file || (kind === HISTORY_LINE && !this.selLine)) {
+      return;
+    }
     const line = this.selLine;
     this.history = { kind, line, items: null };
     cx.notify();
-    const args = kind === "line"
-      ? ["log", "-n", "50", LOG_FORMAT, "--no-patch", `-L${line},${line}:${f.rel}`]
-      : ["log", "-n", "100", "--follow", LOG_FORMAT, "--", f.rel];
+    const args = kind === HISTORY_LINE
+      ? ["log", "-n", String(LINE_HISTORY_COUNT), LOG_FORMAT, "--no-patch", `-L${line},${line}:${file.rel}`]
+      : ["log", "-n", String(FILE_HISTORY_COUNT), "--follow", LOG_FORMAT, "--", file.rel];
     cx.spawn(async (cx) => {
-      const r = await git(args, { cwd: f.root, on: f.on }).catch(() => null);
-      if (!this.history || this.history.kind !== kind || this.history.line !== line) return;
-      this.history.items = r?.code === 0 ? parseLog(r.stdout) : [];
-      this.history.error = r?.code === 0 ? null : (r?.stderr ?? "").trim() || "git log failed";
+      const result = await git(args, { cwd: file.root, on: file.on }).catch(() => null);
+      if (!this.history || this.history.kind !== kind || this.history.line !== line) {
+        return;
+      }
+      const ok = result?.code === 0;
+      this.history.items = ok ? parseLog(result.stdout) : [];
+      this.history.error = ok ? null : (result?.stderr ?? "").trim() || "git log failed";
       cx.notify();
     });
   },
 
-  heatColor(t, h) {
-    if (h === undefined) return null;
-    return h >= 0.9 ? t.ansi1 : h >= 0.7 ? t.ansi3 : h >= 0.45 ? t.ansi2 : h >= 0.2 ? t.ansi4 : t.border;
+  toggleFileHistory(cx) {
+    if (this.history?.kind !== HISTORY_FILE) {
+      this.openHistory(HISTORY_FILE, cx);
+      return;
+    }
+    this.history = null;
+    cx.notify();
+  },
+
+  heatColor(t, level) {
+    if (level === undefined) {
+      return null;
+    }
+    const step = HEAT_STEPS.find(([threshold]) => level >= threshold);
+    return step ? t[step[1]] : t.border;
+  },
+
+  historyEntry(t, file, commit) {
+    return v_flex().id(`h-${commit.hash}`).flex_none().mx(4).px(8).py(4).gap(1).rounded(6).cursor_pointer().hover((style) => style.bg(t.hover))
+      .on_click(() => showInViewer("vx-changes", commitDiffValue(file, commit.hash, commit.subject), fileName(file.rel)))
+      .child(div().truncate().text_size(TEXT.small).text_color(t.foreground).child(commit.subject))
+      .child(h_flex().gap(6).text_size(TEXT.caption).text_color(t.dim)
+        .child(div().font_family(codeFont()).child(commit.short)).child(div().flex_1().truncate().child(commit.author)).child(div().child(shortAge(commit.at))));
+  },
+
+  historyList(t) {
+    const history = this.history;
+    const list = v_flex().id("pv-hist-list").flex_1().min_h(0).overflow_y_scrollbar().py(4);
+    if (history.error) {
+      return list.child(Message(history.error, true));
+    }
+    if (!history.items) {
+      return list.child(Message("Loading…"));
+    }
+    if (!history.items.length) {
+      return list.child(Message("No commits."));
+    }
+    return list.children(history.items.map((commit) => this.historyEntry(t, this.file, commit)));
   },
 
   historyDrawer(t) {
-    const h = this.history;
-    const f = this.file;
-    const pane = v_flex().id("pv-history").w(320).flex_none().h_full().border_l(1).border_color(t.border).bg(t.chrome)
+    const history = this.history;
+    const title = history.kind === HISTORY_LINE ? `Line ${history.line} history` : "File history";
+    return v_flex().id("pv-history").w(320).flex_none().h_full().border_l(1).border_color(t.border).bg(t.chrome)
       .child(h_flex().h(30).flex_none().px(10).gap(6).items_center().border_b(1).border_color(t.border).text_size(TEXT.small)
         .child(Icon("history", 13).text_color(t.accent))
-        .child(div().flex_1().min_w(0).truncate().font_medium().child(h.kind === "line" ? `Line ${h.line} history` : "File history"))
-        .child(IconButton({ id: "pv-hist-close", icon: "x", label: "Close", size: 20, onClick: (cx) => { this.history = null; cx.notify(); } })));
-    const list = v_flex().id("pv-hist-list").flex_1().min_h(0).overflow_y_scrollbar().py(4);
-    if (h.error) list.child(Message(h.error, true));
-    else if (!h.items) list.child(Message("Loading…"));
-    else if (!h.items.length) list.child(Message("No commits."));
-    else list.children(h.items.map((c) => v_flex().id(`h-${c.hash}`).flex_none().mx(4).px(8).py(4).gap(1).rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
-      .on_click(() => showInViewer("vx-changes", { root: f.root, on: f.on ?? null, path: f.rel, scope: "commit", sha: c.hash, subject: c.subject }, f.rel.split("/").pop()))
-      .child(div().truncate().text_size(TEXT.small).text_color(t.foreground).child(c.subject))
-      .child(h_flex().gap(6).text_size(TEXT.caption).text_color(t.dim)
-        .child(div().font_family(codeFont()).child(c.short)).child(div().flex_1().truncate().child(c.author)).child(div().child(shortAge(c.at))))));
-    return pane.child(list);
+        .child(div().flex_1().min_w(0).truncate().font_medium().child(title))
+        .child(IconButton({
+          id: "pv-hist-close", icon: "x", label: "Close", size: 20,
+          onClick: (cx) => {
+            this.history = null;
+            cx.notify();
+          },
+        })))
+      .child(this.historyList(t));
   },
 
-  lineMark(n) {
-    for (const h of this.hunks ?? []) {
-      if (h.kind === "removed") {
-        if (n === h.newStart + 1) return "removed";
-      } else if (n >= h.newStart && n < h.newStart + h.fresh) return h.kind;
+  lineMark(lineNumber) {
+    for (const hunk of this.hunks ?? []) {
+      if (hunk.kind === "removed") {
+        if (lineNumber === hunk.newStart + 1) {
+          return "removed";
+        }
+        continue;
+      }
+      if (lineNumber >= hunk.newStart && lineNumber < hunk.newStart + hunk.fresh) {
+        return hunk.kind;
+      }
     }
     return null;
   },
 
+  blameCells(t, i, size, selected) {
+    const blame = this.blame?.[i];
+    const first = blame && (i === 0 || this.blame[i - 1]?.sha !== blame.sha);
+    return [
+      div().w(4).h_full().flex_none().bg(this.heatColor(t, this.heat?.[i]) ?? t.background),
+      div().w(BLAME_W).flex_none().px(8).truncate().text_size(Math.max(MIN_BLAME_TEXT, size - 3)).text_color(selected ? t.muted : t.dim)
+        .when(i > 0 && Boolean(first), (el) => el.border_t(1).border_color(t.border))
+        .child(first ? blameText(blame) : ""),
+    ];
+  },
+
+  codeRow(t, i, layout) {
+    const lineNumber = i + 1;
+    const mark = this.lineMark(lineNumber);
+    const bar = markBarColor(t, mark);
+    const runs = this.runs?.[i] ?? lexLines([layout.lines[i]], layout.lang)[0];
+    const selected = this.selLine === lineNumber;
+    return h_flex().id(`l${i}`).h(layout.height).w_full().items_center()
+      .when(selected, (el) => el.bg(t.selected))
+      .when(!selected && (mark === "added" || mark === "changed"), (el) => el.bg(tint(bar, ADDED_LINE_ALPHA)))
+      .when(layout.blameOn, (el) => el.children(this.blameCells(t, i, layout.size, selected)))
+      .child(div().w(3).h_full().flex_none().when(Boolean(bar), (el) => el.bg(bar)))
+      .child(div().w(layout.size * GUTTER_RATIO).pr(layout.size * GUTTER_PAD_RATIO).flex_none().text_right().text_color(t.dim).child(String(lineNumber)))
+      .child(h_flex().flex_1().min_w(0).whitespace_nowrap()
+        .children(runs.map((run) => div().flex_none().whitespace_nowrap().text_color(run.kind ? layout.colors[run.kind] : t.foreground).child(run.text || " "))));
+  },
+
+  clickLine(key, cx) {
+    const lineNumber = Number(key.slice(1)) + 1;
+    this.selLine = this.selLine === lineNumber ? null : lineNumber;
+    if (this.history?.kind === HISTORY_LINE && this.selLine) {
+      this.openHistory(HISTORY_LINE, cx);
+    }
+    cx.notify();
+  },
+
   codeRows(t) {
-    const C = syntaxColors(t);
     const size = codeSize();
-    const height = Math.round(size * 1.55);
     const lines = this.lines ?? [];
-    const lang = languageOf(this.file.rel);
-    const listId = `pv-${this.fileKey}`;
-    const widest = lines.reduce((m, l) => Math.max(m, l.length), 0);
     const blameOn = Boolean(this.blameOn && this.blame);
-    const row = (i) => {
-      const n = i + 1;
-      const mark = this.lineMark(n);
-      const bar = mark === "added" ? t.ansi2 : mark === "changed" ? t.ansi3 : mark === "removed" ? t.ansi1 : null;
-      const runs = this.runs?.[i] ?? lexLines([lines[i]], lang)[0];
-      const b = blameOn ? this.blame?.[i] : null;
-      const first = b && (i === 0 || this.blame[i - 1]?.sha !== b.sha);
-      const sel = this.selLine === n;
-      return h_flex().id(`l${i}`).h(height).w_full().items_center()
-        .when(sel, (el) => el.bg(t.selected))
-        .when(!sel && (mark === "added" || mark === "changed"), (el) => el.bg(tint(bar, "1c")))
-        .when(blameOn, (el) => el
-          .child(div().w(4).h_full().flex_none().bg(this.heatColor(t, this.heat?.[i]) ?? t.background))
-          .child(div().w(BLAME_W).flex_none().px(8).truncate().text_size(Math.max(10, size - 3)).text_color(sel ? t.muted : t.dim)
-            .when(i > 0 && first, (e2) => e2.border_t(1).border_color(t.border))
-            .child(first ? (NOT_COMMITTED.test(b.sha) ? "You · Not committed yet" : `${b.author} · ${shortAge(b.time)} · ${b.summary}`) : "")))
-        .child(div().w(3).h_full().flex_none().when(Boolean(bar), (el) => el.bg(bar)))
-        .child(div().w(size * 3.6).pr(size * 0.9).flex_none().text_right().text_color(t.dim).child(String(n)))
-        .child(h_flex().flex_1().min_w(0).whitespace_nowrap()
-          .children(runs.map((r) => div().flex_none().whitespace_nowrap().text_color(r.kind ? C[r.kind] : t.foreground).child(r.text || " "))));
+    const layout = {
+      colors: syntaxColors(t), size, height: Math.round(size * LINE_HEIGHT_RATIO), lines, lang: languageOf(this.file.rel), blameOn,
+    };
+    const listId = `pv-${this.fileKey}`;
+    const widest = lines.reduce((longest, line) => Math.max(longest, line.length), 0);
+    const minWidth = Math.max(MIN_CODE_WIDTH, (widest * CHAR_WIDTH_RATIO + 6) * size + (blameOn ? BLAME_W + 4 : 0));
+    const renderRange = (range) => {
+      const out = [];
+      for (let i = range.start; i < range.end; i++) {
+        out.push(this.codeRow(t, i, layout));
+      }
+      return out;
     };
     return div().id("pv-code").flex_1().min_w(0).h_full().min_h(0).relative().font_family(codeFont()).text_size(size)
       .child(div().id("pv-x").size_full().overflow_x_scrollbar()
-        .child(div().h_full().min_w(Math.max(300, (widest * 0.62 + 6) * size + (blameOn ? BLAME_W + 4 : 0)))
-          .child(v_virtual_list(listId, lines.length, height, (i) => `l${i}`, (range) => {
-            const out = [];
-            for (let i = range.start; i < range.end; i++) out.push(row(i));
-            return out;
-          }).track_scroll(this.scroller).on_item_click((key, cx) => {
-            const n = Number(key.slice(1)) + 1;
-            this.selLine = this.selLine === n ? null : n;
-            if (this.history?.kind === "line" && this.selLine) this.openHistory("line", cx);
-            cx.notify();
-          }).size_full())))
+        .child(div().h_full().min_w(minWidth)
+          .child(v_virtual_list(listId, lines.length, layout.height, (i) => `l${i}`, renderRange)
+            .track_scroll(this.scroller).on_item_click((key, cx) => this.clickLine(key, cx)).size_full())))
       .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0());
   },
 
-  // ── editing ────────────────────────────────────────────────────────────────────────────
   dirtyKey() {
     return this.file ? `${this.file.root}/${this.file.rel}` : null;
   },
 
   setDirty(on) {
     const key = this.dirtyKey();
-    if (!key) return;
-    const all = shared("vx.dirty") ?? {};
-    if (Boolean(all[key]) === on) return;
+    if (!key) {
+      return;
+    }
+    const all = shared(DIRTY_KEY) ?? {};
+    if (Boolean(all[key]) === on) {
+      return;
+    }
     const next = { ...all };
-    if (on) next[key] = true;
-    else delete next[key];
-    setShared("vx.dirty", next);
+    if (on) {
+      next[key] = true;
+    } else {
+      delete next[key];
+    }
+    setShared(DIRTY_KEY, next);
   },
 
   startEdit(cx) {
-    if (!this.file || this.file.on || this.text === undefined || this.text === null) return;
+    if (!this.file || this.file.on || this.text === undefined || this.text === null) {
+      return;
+    }
     this.keepTab();
-    const C = syntaxColors(theme());
+    const colors = syntaxColors(theme());
     this.editor = EditorState.new({
       language: languageOf(this.file.rel) ?? undefined, value: this.text, font_family: codeFont(), font_size: codeSize(),
-      syntax: { keyword: C.keyword, string: C.string, comment: C.comment, function: C.fn, type: C.type, number: C.number, constant: C.constant },
+      syntax: { keyword: colors.keyword, string: colors.string, comment: colors.comment, function: colors.fn, type: colors.type, number: colors.number, constant: colors.constant },
     });
     this.saved = this.text;
-    this.editor.on("change", (_e, cx) => { this.setDirty(this.editor.value() !== this.saved); cx.notify(); });
+    this.editor.on("change", (_event, cx) => {
+      this.setDirty(this.editor.value() !== this.saved);
+      cx.notify();
+    });
     this.editor.focus();
     cx.notify();
   },
 
   stopEdit(cx) {
     if (this.editor && this.editor.value() !== this.saved) {
-      notify({ title: "Unsaved changes", body: "Save (⌘S) or Revert first.", timeout: 3000 });
+      notify({ title: "Unsaved changes", body: "Save (⌘S) or Revert first.", timeout: UNSAVED_TOAST_MS });
       return;
     }
     this.editor?.release();
@@ -328,85 +516,155 @@ export const previewMethods = {
     cx.notify();
   },
 
+  toggleEdit(cx) {
+    if (this.editor) {
+      this.stopEdit(cx);
+    } else {
+      this.startEdit(cx);
+    }
+  },
+
   revert(cx) {
-    if (!this.editor) return;
+    if (!this.editor) {
+      return;
+    }
     this.editor.set_value(this.saved);
     this.setDirty(false);
     cx.notify();
   },
 
   save(cx) {
-    const f = this.file;
-    if (!this.editor || !f) return;
+    const file = this.file;
+    if (!this.editor || !file) {
+      return;
+    }
     const text = this.editor.value();
-    if (text === this.saved) return;
+    if (text === this.saved) {
+      return;
+    }
     cx.spawn(async (cx) => {
       try {
-        await writeTextFile(`${f.root}/${f.rel}`, text, this.saved);
+        await writeTextFile(`${file.root}/${file.rel}`, text, this.saved);
         this.saved = text;
         this.text = text;
         this.setDirty(false);
-        bump(f.root);
-        notify({ title: `Saved ${f.rel.split("/").pop()}`, level: "success", timeout: 1500 });
-      } catch (e) {
-        notify({ title: "Not saved", body: /stale|changed|expected/i.test(String(e)) ? "The file changed on disk since you opened it. Revert to load it, then edit again." : String(e?.message ?? e), level: "error", timeout: 8000 });
+        bump(file.root);
+        notify({ title: `Saved ${fileName(file.rel)}`, level: "success", timeout: SAVED_TOAST_MS });
+      } catch (error) {
+        const body = STALE_WRITE.test(String(error))
+          ? "The file changed on disk since you opened it. Revert to load it, then edit again."
+          : String(error?.message ?? error);
+        notify({ title: "Not saved", body, level: "error", timeout: SAVE_ERROR_TOAST_MS });
       }
       cx.notify();
     });
   },
 
+  setMdCode(on, cx) {
+    this.mdCode = on;
+    cx.notify();
+  },
+
+  codeTools(t, el) {
+    const lineLabel = this.selLine ? `History of line ${this.selLine}` : "Click a line, then show its history";
+    return el
+      .when(Boolean(this.selLine), (row) => row.child(div().text_size(TEXT.caption).text_color(t.dim).child(`line ${this.selLine}`)))
+      .child(IconButton({ id: "pv-blame", icon: "blame", label: this.blameOn ? "Hide blame" : "Blame (author · age per line, heatmap)", active: Boolean(this.blameOn), onClick: (cx) => this.toggleBlame(cx), size: 22 }))
+      .child(IconButton({ id: "pv-hist", icon: "history", label: "File history", active: this.history?.kind === HISTORY_FILE, onClick: (cx) => this.toggleFileHistory(cx), size: 22 }))
+      .child(IconButton({ id: "pv-lhist", icon: "line-history", label: lineLabel, disabled: !this.selLine, active: this.history?.kind === HISTORY_LINE, onClick: (cx) => this.openHistory(HISTORY_LINE, cx), size: 22 }));
+  },
+
+  editTools(t, el) {
+    const unsaved = Boolean(this.editor) && this.editor?.value() !== this.saved;
+    return el
+      .when(unsaved, (row) => row
+        .child(toolbarLink(t, "pv-revert", "Revert", (cx) => this.revert(cx), false))
+        .child(toolbarLink(t, "pv-save", "Save ⌘S", (cx) => this.save(cx), true)))
+      .child(IconButton({ id: "pv-edit", icon: "pencil", label: this.editor ? "Stop editing" : "Edit this file", active: Boolean(this.editor), onClick: (cx) => this.toggleEdit(cx), size: 22 }));
+  },
+
+  previewToolbar(t, file, isMarkdown) {
+    const abs = `${file.root}/${file.rel}`;
+    const showsCode = !isMarkdown || this.mdCode;
+    const editable = !file.on && !IMAGE.test(file.rel) && showsCode && this.text !== undefined;
+    return h_flex().h(30).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).text_size(TEXT.small)
+      .child(FileIcon(this.icons, abs, { size: 14 }))
+      .child(div().flex_none().max_w(320).truncate().font_medium().child(fileName(file.rel)))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(parentFolder(file.rel)))
+      .when(isMarkdown, (el) => el
+        .child(IconButton({ id: "pv-md", icon: "eye", label: "Rendered", active: !this.mdCode, onClick: (cx) => this.setMdCode(false, cx), size: 22 }))
+        .child(IconButton({ id: "pv-code", icon: "file", label: "Code", active: this.mdCode, onClick: (cx) => this.setMdCode(true, cx), size: 22 })))
+      .when(showsCode, (el) => this.codeTools(t, el))
+      .when(editable, (el) => this.editTools(t, el))
+      .when(!file.on, (el) => el.child(IconButton({ id: "pv-open", icon: "external", label: "Open in default app", onClick: () => exec("open", ["--", abs]).catch(() => {}), size: 22 })));
+  },
+
+  // The selected line's full blame, like GitLens' current-line annotation.
+  selectedBlameBar(t, file, blame) {
+    const uncommitted = NOT_COMMITTED.test(blame.sha);
+    const date = blame.time ? new Date(blame.time * MS_PER_SECOND).toISOString().slice(0, ISO_DATE_LENGTH) : "";
+    return h_flex().h(24).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).bg(t.chrome).text_size(TEXT.caption).text_color(t.muted)
+      .child(Icon("git-commit", 11).text_color(t.accent))
+      .child(div().font_family(codeFont()).child(uncommitted ? "uncommitted" : blame.sha.slice(0, SHORT_SHA)))
+      .child(div().child(uncommitted ? "You" : blame.author))
+      .child(div().child(date))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(uncommitted ? "Not committed yet" : blame.summary))
+      .when(!uncommitted, (el) => el.child(h_flex().id("pv-sb-open").px(6).h(18).items_center().rounded(4).cursor_pointer().text_color(t.accent).hover((style) => style.bg(t.hover))
+        .on_click(() => showInViewer("vx-changes", commitDiffValue(file, blame.sha, blame.summary), fileName(file.rel)))
+        .child("open commit diff")));
+  },
+
+  previewBody(t, file, isMarkdown) {
+    if (this.problem) {
+      return Message(this.problem);
+    }
+    if (IMAGE.test(file.rel)) {
+      return this.imageCopy ? h_flex().flex_1().min_h(0).p(16).justify_center().items_center().child(image(this.imageCopy).max_w_full().max_h_full()) : Message("Loading…");
+    }
+    if (this.text === undefined) {
+      return Message("Loading…");
+    }
+    if (isMarkdown && !this.mdCode) {
+      return div().id("pv-md-body").flex_1().min_h(0).overflow_y_scrollbar().px(28).py(18)
+        .child(TextView.markdown(`md-${this.fileKey}`, this.text).w_full().text_size(TEXT.title).selectable(true).scrollable(false));
+    }
+    if (this.editor) {
+      return div().id("pv-editor").flex_1().min_h(0).font_family(codeFont())
+        .on_key_down((event, cx) => {
+          if (event.key === "s" && event.modifiers?.platform) {
+            cx.stop_propagation();
+            this.save(cx);
+          }
+        })
+        .child(Editor.new(this.editor).size_full());
+    }
+    return null;
+  },
+
   renderPreview() {
     const t = theme();
-    const f = this.file;
+    const file = this.file;
     const root = v_flex().id("vx-preview").size_full().min_w(0).min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(TEXT.body);
-    if (!f) return root.child(Message("Pick a file in Files to preview it here."));
-    const md = MARKDOWN.test(f.rel);
-    const abs = `${f.root}/${f.rel}`;
-    const dir = f.rel.includes("/") ? f.rel.slice(0, f.rel.lastIndexOf("/")) : "";
-    root.child(h_flex().h(30).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).text_size(TEXT.small)
-      .child(FileIcon(this.icons, abs, { size: 14 }))
-      .child(div().flex_none().max_w(320).truncate().font_medium().child(f.rel.split("/").pop()))
-      .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(dir))
-      .when(md, (el) => el
-        .child(IconButton({ id: "pv-md", icon: "eye", label: "Rendered", active: !this.mdCode, onClick: (cx) => { this.mdCode = false; cx.notify(); }, size: 22 }))
-        .child(IconButton({ id: "pv-code", icon: "file", label: "Code", active: this.mdCode, onClick: (cx) => { this.mdCode = true; cx.notify(); }, size: 22 })))
-      .when(!md || this.mdCode, (el) => el
-        .when(Boolean(this.selLine), (e2) => e2.child(div().text_size(TEXT.caption).text_color(t.dim).child(`line ${this.selLine}`)))
-        .child(IconButton({ id: "pv-blame", icon: "blame", label: this.blameOn ? "Hide blame" : "Blame (author · age per line, heatmap)", active: Boolean(this.blameOn), onClick: (cx) => this.toggleBlame(cx), size: 22 }))
-        .child(IconButton({ id: "pv-hist", icon: "history", label: "File history", active: this.history?.kind === "file", onClick: (cx) => (this.history?.kind === "file" ? ((this.history = null), cx.notify()) : this.openHistory("file", cx)), size: 22 }))
-        .child(IconButton({ id: "pv-lhist", icon: "line-history", label: this.selLine ? `History of line ${this.selLine}` : "Click a line, then show its history", disabled: !this.selLine, active: this.history?.kind === "line", onClick: (cx) => this.openHistory("line", cx), size: 22 })))
-      .when(!f.on && !IMAGE.test(f.rel) && (!md || this.mdCode) && this.text !== undefined, (el) => el
-        .when(Boolean(this.editor) && this.editor?.value() !== this.saved, (e2) => e2
-          .child(div().id("pv-revert").px(8).h(22).flex().items_center().rounded(5).cursor_pointer().text_size(TEXT.caption).text_color(t.muted).hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.revert(cx)).child("Revert"))
-          .child(div().id("pv-save").px(8).h(22).flex().items_center().rounded(5).cursor_pointer().text_size(TEXT.caption).bg(t.solid ?? t.accent).text_color(t.solid_foreground ?? t.accent_foreground).on_click((_e, cx) => this.save(cx)).child("Save ⌘S")))
-        .child(IconButton({ id: "pv-edit", icon: "pencil", label: this.editor ? "Stop editing" : "Edit this file", active: Boolean(this.editor), onClick: (cx) => (this.editor ? this.stopEdit(cx) : this.startEdit(cx)), size: 22 })))
-      .when(!f.on, (el) => el.child(IconButton({ id: "pv-open", icon: "external", label: "Open in default app", onClick: () => exec("open", ["--", abs]).catch(() => {}), size: 22 }))));
-    if (this.blameOn && this.blameError && !md) root.child(div().px(10).py(4).text_size(TEXT.caption).text_color(t.dim).child(this.blameError));
-    // The selected line's full blame, like GitLens' current-line annotation.
-    const sb = this.blameOn && this.selLine ? this.blame?.[this.selLine - 1] : null;
-    if (sb) root.child(h_flex().h(24).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).bg(t.chrome).text_size(TEXT.caption).text_color(t.muted)
-      .child(Icon("git-commit", 11).text_color(t.accent))
-      .child(div().font_family(codeFont()).child(NOT_COMMITTED.test(sb.sha) ? "uncommitted" : sb.sha.slice(0, 8)))
-      .child(div().child(NOT_COMMITTED.test(sb.sha) ? "You" : sb.author))
-      .child(div().child(sb.time ? new Date(sb.time * 1000).toISOString().slice(0, 10) : ""))
-      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(NOT_COMMITTED.test(sb.sha) ? "Not committed yet" : sb.summary))
-      .when(!NOT_COMMITTED.test(sb.sha), (el) => el.child(h_flex().id("pv-sb-open").px(6).h(18).items_center().rounded(4).cursor_pointer().text_color(t.accent).hover((s) => s.bg(t.hover))
-        .on_click(() => showInViewer("vx-changes", { root: f.root, on: f.on ?? null, path: f.rel, scope: "commit", sha: sb.sha, subject: sb.summary }, f.rel.split("/").pop()))
-        .child("open commit diff"))));
-    if (this.problem) return root.child(Message(this.problem));
-    if (IMAGE.test(f.rel))
-      return root.child(this.imageCopy ? h_flex().flex_1().min_h(0).p(16).justify_center().items_center().child(image(this.imageCopy).max_w_full().max_h_full()) : Message("Loading…"));
-    if (this.text === undefined) return root.child(Message("Loading…"));
-    if (md && !this.mdCode)
-      return root.child(div().id("pv-md-body").flex_1().min_h(0).overflow_y_scrollbar().px(28).py(18)
-        .child(TextView.markdown(`md-${this.fileKey}`, this.text).w_full().text_size(TEXT.title).selectable(true).scrollable(false)));
-    if (this.editor) {
-      return root.child(div().id("pv-editor").flex_1().min_h(0).font_family(codeFont())
-        .on_key_down((e, cx) => { if (e.key === "s" && e.modifiers?.platform) { cx.stop_propagation(); this.save(cx); } })
-        .child(Editor.new(this.editor).size_full()));
+    if (!file) {
+      return root.child(Message("Pick a file in Files to preview it here."));
+    }
+    const isMarkdown = MARKDOWN.test(file.rel);
+    root.child(this.previewToolbar(t, file, isMarkdown));
+    if (this.blameOn && this.blameError && !isMarkdown) {
+      root.child(div().px(10).py(4).text_size(TEXT.caption).text_color(t.dim).child(this.blameError));
+    }
+    const selectedBlame = this.blameOn && this.selLine ? this.blame?.[this.selLine - 1] : null;
+    if (selectedBlame) {
+      root.child(this.selectedBlameBar(t, file, selectedBlame));
+    }
+    const body = this.previewBody(t, file, isMarkdown);
+    if (body) {
+      return root.child(body);
     }
     root.child(h_flex().flex_1().min_h(0).child(this.codeRows(t)).when(Boolean(this.history), (el) => el.child(this.historyDrawer(t))));
-    if (this.truncated) root.child(Message(`Showing the first ${MAX_LINES.toLocaleString()} lines.`));
+    if (this.truncated) {
+      root.child(Message(`Showing the first ${MAX_LINES.toLocaleString()} lines.`));
+    }
     return root;
   },
 };

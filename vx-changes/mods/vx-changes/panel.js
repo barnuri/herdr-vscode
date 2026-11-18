@@ -1,11 +1,3 @@
-// Source Control, VS Code's way: the commit box on top (⌘Enter commits, the ⌄ has Commit & Push / Sync / Amend), then Merge / Staged / Changes, then the
-// GitLens sections (sections.js).
-//
-// Writes, and how they're guarded:
-//   stage / unstage / commit      buttons (index and a new commit only)
-//   discard                       asks; edited files go back to the index copy, new files to the Trash
-//   push / pull / sync / publish  ask (actions.js), like the status bar's
-//   stash / new branch            a dialog you fill in is the ask
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
 import { theme, notify, shared, exec } from "herdr";
@@ -19,22 +11,125 @@ import { askConfirm } from "./actions.js";
 import { openScmMenu, openScmAsk } from "./scm-popups.js";
 
 const MOD = "vx-changes";
-const LIMIT = 1000;
-const ROW = 24;
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const FILES_MOD = "vx-files";
+const COMMAND_KEY = "vx.changes.cmd";
+const CLOSED_KEY = "closed";
+const VIEW_KEY = "view";
+const VIEW_TREE = "tree";
+const VIEW_FLAT = "flat";
+const VIEW_COMMAND = "view";
+const STAGED = "staged";
+const STAGE = "stage";
+const UNSTAGE = "unstage";
+const AMEND = "amend";
+const COMMIT = "commit";
+const COMMIT_ALL = "commitAll";
+const SHOWN_FILES_LIMIT = 1000;
+const INDEX_BATCH = 200;
+const ROW_HEIGHT = 24;
+const INDENT = 12;
+const WRITE_TIMEOUT_MS = 120000;
+const SUCCESS_TIMEOUT_MS = 3000;
+const SHORT_SHA = 8;
+const BRANCH_SHA = 7;
+const COMMIT_MENU_WIDTH = 250;
+const ID_RADIX = 36;
+const ID_SUFFIX_START = 2;
+const ID_SUFFIX_END = 7;
+const TRANSPARENT = "#00000000";
+const PRESSED_TINT = "#ffffff";
+const STATUS_ARGS = ["status", "--porcelain=v1", "-z", "-b", "--no-renames", "--untracked-files=all"];
+const NUMSTAT_ARGS = ["--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv"];
+const REMOTE_COMMANDS = new Set(["fetch", "pull", "push", "sync", "publish"]);
+
+const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+const commandFailure = (result) => new Error((result.stderr || result.stdout).trim());
+
+function stagedLetter(file) {
+  if (file.x === "A" || file.x === "D") {
+    return file.x;
+  }
+  return "M";
+}
+
+function unstagedLetter(file) {
+  if (file.untracked) {
+    return "U";
+  }
+  if (file.conflict) {
+    return "!";
+  }
+  return file.y === "D" ? "D" : "M";
+}
+
+function primaryIcon(kind) {
+  if (kind === "sync") {
+    return "sync";
+  }
+  if (kind === "publish") {
+    return "cloud-upload";
+  }
+  return kind === AMEND ? "pencil" : "commit-check";
+}
+
+function syncDetail(behind, ahead, afterCommit) {
+  const pulls = behind ? `Pulls ${plural(behind, "commit")}${ahead ? ", replaying your unpushed commits on top" : ""}` : "Pulls anything new";
+  const pushes = ahead ? `, then pushes ${afterCommit ? "your commits" : plural(ahead, "commit")}. Other people will see them.` : ".";
+  return `${pulls}${pushes}`;
+}
+
+function discardDetail(restore, trash, single) {
+  const restoreText = single ? "It goes" : `${plural(restore.length, "edited file")} go`;
+  const trashText = single ? "This new file goes" : `${plural(trash.length, "new file")} go`;
+  return [
+    restore.length ? `${restoreText} back to the last staged or committed version.` : "",
+    trash.length ? `${trashText} to the Trash.` : "",
+    "Staged changes stay.",
+  ].filter(Boolean).join(" ");
+}
+
+function buildTree(files) {
+  const root = { dirs: new Map(), files: [] };
+  for (const file of files) {
+    const parts = file.path.split("/");
+    parts.pop();
+    let node = root;
+    for (const part of parts) {
+      if (!node.dirs.has(part)) {
+        node.dirs.set(part, { dirs: new Map(), files: [] });
+      }
+      node = node.dirs.get(part);
+    }
+    node.files.push(file);
+  }
+  return root;
+}
+
+// Folds a chain of single-child folders into one label.
+function foldSingleChildren(name, node) {
+  let label = name;
+  let current = node;
+  while (current.files.length === 0 && current.dirs.size === 1) {
+    const [[childName, child]] = [...current.dirs];
+    label += `/${childName}`;
+    current = child;
+  }
+  return { label, node: current };
+}
 
 export const panelMethods = {
   initPanel(cx) {
-    this.uid = `scm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    this.uid = `scm-${Date.now().toString(ID_RADIX)}-${Math.random().toString(ID_RADIX).slice(ID_SUFFIX_START, ID_SUFFIX_END)}`;
     this.tops = new Map();
     this.files = [];
     this.stats = [{}, {}];
     try {
-      this.closed = new Set(JSON.parse(localStorage.getItem("closed") ?? "[]"));
+      this.closed = new Set(JSON.parse(localStorage.getItem(CLOSED_KEY) ?? "[]"));
     } catch {
       this.closed = new Set();
     }
-    this.view = localStorage.getItem("view") === "tree" ? "tree" : "flat";
+    this.view = localStorage.getItem(VIEW_KEY) === VIEW_TREE ? VIEW_TREE : VIEW_FLAT;
     this.amend = false;
     this.ahead = 0;
     this.behind = 0;
@@ -42,8 +137,7 @@ export const panelMethods = {
   },
 
   followPanel(cx) {
-    const c = ctx();
-    const key = contextKey(c);
+    const key = contextKey(ctx());
     if (key !== this.key) {
       this.key = key;
       this.note = null;
@@ -55,60 +149,81 @@ export const panelMethods = {
       this.seenChange = changedAt();
       this.refresh(cx);
     }
-    // Commands from our popups and dialogs (scm-popups.js), addressed to this copy only.
-    const cmd = shared("vx.changes.cmd");
-    if (cmd?.owner === this.uid && cmd.id !== this.seenCmd) {
-      this.seenCmd = cmd.id;
-      this.runCmd(cmd, cx);
+    const cmd = shared(COMMAND_KEY);
+    if (cmd?.owner !== this.uid || cmd.id === this.seenCmd) {
+      return;
+    }
+    this.seenCmd = cmd.id;
+    this.runCmd(cmd, cx);
+  },
+
+  applyStatus(top, context, results) {
+    const { status, staged, unstaged, head } = results;
+    const parsed = parseStatus(status.stdout);
+    if (top !== this.root) {
+      this.amend = false;
+    }
+    this.root = top;
+    this.on = context.on;
+    this.source = context.source;
+    this.branch = parsed.detached ? null : parsed.branch;
+    this.detached = parsed.detached;
+    this.upstream = parsed.upstream;
+    this.ahead = parsed.ahead;
+    this.behind = parsed.behind;
+    this.files = parsed.files;
+    this.stats = [parseNumstat(staged.stdout), parseNumstat(unstaged.stdout)];
+    this.head = head.code === 0 ? head.stdout.trim() : null;
+    this.error = null;
+    return `${top}|${this.head}|${parsed.upstream}|${parsed.ahead}|${parsed.behind}|${status.stdout}`;
+  },
+
+  async readRepo(context, key, cx) {
+    const top = await repoTop(this.tops, context.cwd, context.on);
+    if (contextKey(ctx()) !== key) {
+      return;
+    }
+    if (!top) {
+      this.root = null;
+      this.error = "Not a git repository. Pick a repo in Workspace.";
+      return;
+    }
+    const runGit = (args) => git(args, { cwd: top, on: context.on });
+    const [status, staged, unstaged, head] = await Promise.all([
+      runGit(STATUS_ARGS),
+      runGit(["diff", "--cached", ...NUMSTAT_ARGS]),
+      runGit(["diff", ...NUMSTAT_ARGS]),
+      runGit(["rev-parse", "--verify", "-q", "HEAD"]),
+    ]);
+    if (contextKey(ctx()) !== key) {
+      return;
+    }
+    if (status.code !== 0) {
+      throw new Error(status.stderr.trim() || "git status failed");
+    }
+    // Sections reload only when HEAD, the tree or the upstream moved.
+    const signature = this.applyStatus(top, context, { status, staged, unstaged, head });
+    if (signature !== this.sectionsSig) {
+      this.sectionsSig = signature;
+      this.refreshSections(cx);
     }
   },
 
   refresh(cx) {
-    if (this.loading) return;
-    const c = ctx();
-    const key = contextKey(c);
-    if (!c.cwd) return;
+    if (this.loading) {
+      return;
+    }
+    const context = ctx();
+    const key = contextKey(context);
+    if (!context.cwd) {
+      return;
+    }
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
-        const top = await repoTop(this.tops, c.cwd, c.on);
-        if (contextKey(ctx()) !== key) return;
-        if (!top) {
-          this.root = null;
-          this.error = "Not a git repository. Pick a repo in Workspace.";
-          return;
-        }
-        const g = (args) => git(args, { cwd: top, on: c.on });
-        const [st, staged, unstaged, head] = await Promise.all([
-          g(["status", "--porcelain=v1", "-z", "-b", "--no-renames", "--untracked-files=all"]),
-          g(["diff", "--cached", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv"]),
-          g(["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv"]),
-          g(["rev-parse", "--verify", "-q", "HEAD"]),
-        ]);
-        if (contextKey(ctx()) !== key) return;
-        if (st.code !== 0) throw new Error(st.stderr.trim() || "git status failed");
-        const s = parseStatus(st.stdout);
-        if (top !== this.root) this.amend = false;
-        this.root = top;
-        this.on = c.on;
-        this.source = c.source;
-        this.branch = s.detached ? null : s.branch;
-        this.detached = s.detached;
-        this.upstream = s.upstream;
-        this.ahead = s.ahead;
-        this.behind = s.behind;
-        this.files = s.files;
-        this.stats = [parseNumstat(staged.stdout), parseNumstat(unstaged.stdout)];
-        this.head = head.code === 0 ? head.stdout.trim() : null;
-        this.error = null;
-        // Sections (commits, branches...) reload only when HEAD, the tree or the upstream moved.
-        const sig = `${top}|${this.head}|${s.upstream}|${s.ahead}|${s.behind}|${st.stdout}`;
-        if (sig !== this.sectionsSig) {
-          this.sectionsSig = sig;
-          this.refreshSections(cx);
-        }
-      } catch (e) {
-        this.error = String(e?.message ?? e);
+        await this.readRepo(context, key, cx);
+      } catch (error) {
+        this.error = String(error?.message ?? error);
       } finally {
         this.loading = false;
         cx.notify();
@@ -116,46 +231,67 @@ export const panelMethods = {
     });
   },
 
-  // ── commands from popups ───────────────────────────────────────────────────────────────
-  runCmd(c, cx) {
-    const file = c.path ? this.files.find((f) => f.path === c.path) : null;
-    switch (c.cmd) {
-      case "commit": return this.commit(cx, c.then ?? null, c.kind ?? null);
-      case "amend": return this.setAmend(!this.amend, cx);
-      case "stageAll": return this.index("stage", this.groups().unstaged, cx);
-      case "unstageAll": return this.index("unstage", this.groups().staged, cx);
-      case "discardAll": return this.askDiscard(this.groups().unstaged);
-      case "stage": return file && this.index("stage", [file], cx);
-      case "unstage": return file && this.index("unstage", [file], cx);
-      case "discard": return file && this.askDiscard([file]);
-      case "openFile": return this.openFile(c.path);
-      case "openDiff": return file && this.openDiff(file, c.scope);
-      case "reveal": return exec("open", ["-R", `${this.root}/${c.path}`]).catch(() => {});
-      case "view": this.view = c.value; localStorage.setItem("view", this.view); return cx.notify();
-      case "fetch": case "pull": case "push": case "sync": case "publish": return this.askGit(c.cmd);
-      case "stashAsk": return openScmAsk(this.uid, { kind: "stash", staged: Boolean(c.staged) });
-      case "stashPush": return this.stashPush(c, cx);
-      case "branchAsk": return openScmAsk(this.uid, { kind: "branch", from: this.branch ?? this.head?.slice(0, 8) });
-      case "createBranch": return this.createBranch(c, cx);
-      default: return this.runSectionCmd(c, cx);
+  setView(view, cx) {
+    this.view = view;
+    localStorage.setItem(VIEW_KEY, this.view);
+    cx.notify();
+  },
+
+  runFileCmd(command, file, cx) {
+    switch (command.cmd) {
+      case STAGE: return this.index(STAGE, [file], cx);
+      case UNSTAGE: return this.index(UNSTAGE, [file], cx);
+      case "discard": return this.askDiscard([file]);
+      case "openDiff": return this.openDiff(file, command.scope);
+      default: return undefined;
     }
   },
 
-  // A write that a dialog already confirmed: run it, tell how it went, reread everything.
+  runCmd(command, cx) {
+    const file = command.path ? this.files.find((candidate) => candidate.path === command.path) : null;
+    if (REMOTE_COMMANDS.has(command.cmd)) {
+      return this.askGit(command.cmd);
+    }
+    switch (command.cmd) {
+      case COMMIT: return this.commit(cx, command.then ?? null, command.kind ?? null);
+      case AMEND: return this.setAmend(!this.amend, cx);
+      case "stageAll": return this.index(STAGE, this.groups().unstaged, cx);
+      case "unstageAll": return this.index(UNSTAGE, this.groups().staged, cx);
+      case "discardAll": return this.askDiscard(this.groups().unstaged);
+      case STAGE:
+      case UNSTAGE:
+      case "discard":
+      case "openDiff": return file && this.runFileCmd(command, file, cx);
+      case "openFile": return this.openFile(command.path);
+      case "reveal": return exec("open", ["-R", `${this.root}/${command.path}`]).catch(() => {});
+      case VIEW_COMMAND: return this.setView(command.value, cx);
+      case "stashAsk": return openScmAsk(this.uid, { kind: "stash", staged: Boolean(command.staged) });
+      case "stashPush": return this.stashPush(command, cx);
+      case "branchAsk": return openScmAsk(this.uid, { kind: "branch", from: this.branch ?? this.head?.slice(0, SHORT_SHA) });
+      case "createBranch": return this.createBranch(command, cx);
+      default: return this.runSectionCmd(command, cx);
+    }
+  },
+
+  // A write that a dialog already confirmed: run it, report how it went, reread everything.
   runWrite(args, { doing, done }, cx) {
     const root = this.root;
-    if (!root || this.busy) return;
+    if (!root || this.busy) {
+      return;
+    }
     this.busy = true;
     this.note = null;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const r = await git(args, { cwd: root, on: this.on, timeout: 120000 });
-        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
-        notify({ title: done, body: (r.stdout || r.stderr).trim().split("\n").pop() || undefined, level: "success", timeout: 3000 });
+        const result = await git(args, { cwd: root, on: this.on, timeout: WRITE_TIMEOUT_MS });
+        if (result.code !== 0) {
+          throw commandFailure(result);
+        }
+        notify({ title: done, body: (result.stdout || result.stderr).trim().split("\n").pop() || undefined, level: "success", timeout: SUCCESS_TIMEOUT_MS });
         bump(root);
-      } catch (e) {
-        this.note = `${doing} failed: ${e.message}`;
+      } catch (error) {
+        this.note = `${doing} failed: ${error.message}`;
       } finally {
         this.busy = false;
         this.refresh(cx);
@@ -163,68 +299,108 @@ export const panelMethods = {
     });
   },
 
-  stashPush(c, cx) {
+  stashPush(command, cx) {
     const args = ["stash", "push"];
-    if (c.staged) args.push("--staged");
-    else if (c.untracked) args.push("--include-untracked");
-    if (c.value) args.push("-m", c.value);
+    if (command.staged) {
+      args.push("--staged");
+    } else if (command.untracked) {
+      args.push("--include-untracked");
+    }
+    if (command.value) {
+      args.push("-m", command.value);
+    }
     this.runWrite(args, { doing: "Stash", done: "Stashed" }, cx);
   },
 
-  createBranch(c, cx) {
-    if (!c.value) return;
-    this.runWrite(c.switch ? ["switch", "-c", c.value] : ["branch", c.value], { doing: "New branch", done: c.switch ? `On ${c.value}` : `Created ${c.value}` }, cx);
+  createBranch(command, cx) {
+    if (!command.value) {
+      return;
+    }
+    const args = command.switch ? ["switch", "-c", command.value] : ["branch", command.value];
+    this.runWrite(args, { doing: "New branch", done: command.switch ? `On ${command.value}` : `Created ${command.value}` }, cx);
   },
 
-  // ── remote: fetch, pull, push, sync, publish (they all ask) ────────────────────────────
-  gitSpec(kind, { afterCommit = false } = {}) {
-    const name = baseName(this.root);
-    const b = this.branch ?? "HEAD";
-    const up = this.upstream ?? "its upstream";
-    const ahead = this.ahead + (afterCommit ? 1 : 0);
-    const action = (args, doing, done) => ({ cmd: "git", args, cwd: this.root, on: this.on ?? null, doing, done, root: this.root });
-    if (kind === "fetch") return { title: `Fetch ${name}?`, detail: "Downloads new commits and branches from the remote. Nothing local changes.", label: "Fetch", action: action(["fetch", "--prune"], "Fetching", `Fetched ${name}`) };
-    if (kind === "pull") return { title: `Pull into ${b}?`, detail: `Fast-forward only from ${up}. Stops instead of merging if your branch has diverged.`, label: "Pull", action: action(["pull", "--ff-only"], "Pulling", `Pulled ${name}`) };
-    if (kind === "push") return { title: `Push ${b}?`, detail: `${afterCommit ? "Your new commit and any others" : plural(ahead, "commit")} go to ${up}. Other people will see them.`, label: "Push", danger: true, action: action(["push"], "Pushing", `Pushed ${b}`) };
-    if (kind === "publish") return { title: `Publish ${b}?`, detail: "Pushes the branch to origin and tracks it there. Other people will see it.", label: "Publish", danger: true, action: action(["push", "-u", "origin", b], "Publishing", `Published ${b}`) };
-    // sync: pull (rebasing unpushed commits on top), then push
+  gitAction(args, doing, done) {
+    return { cmd: "git", args, cwd: this.root, on: this.on ?? null, doing, done, root: this.root };
+  },
+
+  // Sync pulls (rebasing unpushed commits on top), then pushes.
+  syncSpec(branch, upstream, ahead, afterCommit) {
     const steps = [];
-    if (this.behind || !afterCommit) steps.push({ cmd: "git", args: ahead ? ["pull", "--rebase"] : ["pull", "--ff-only"] });
-    if (ahead) steps.push({ cmd: "git", args: ["push"] });
+    if (this.behind || !afterCommit) {
+      steps.push({ cmd: "git", args: ahead ? ["pull", "--rebase"] : ["pull", "--ff-only"] });
+    }
+    if (ahead) {
+      steps.push({ cmd: "git", args: ["push"] });
+    }
     return {
-      title: `Sync ${b} with ${up}?`,
-      detail: `${this.behind ? `Pulls ${plural(this.behind, "commit")}${ahead ? ", replaying your unpushed commits on top" : ""}` : "Pulls anything new"}${ahead ? `, then pushes ${afterCommit ? "your commits" : plural(ahead, "commit")}. Other people will see them.` : "."}`,
-      label: "Sync", danger: Boolean(ahead),
-      action: { ...action(steps[0].args, "Syncing", `Synced ${b}`), steps },
+      title: `Sync ${branch} with ${upstream}?`,
+      detail: syncDetail(this.behind, ahead, afterCommit),
+      label: "Sync",
+      danger: Boolean(ahead),
+      action: { ...this.gitAction(steps[0].args, "Syncing", `Synced ${branch}`), steps },
     };
   },
 
-  askGit(kind, opts) {
-    if (!this.root) return;
-    if ((kind === "push" || kind === "sync") && !this.upstream) kind = "publish";
-    if (kind === "publish" && !this.branch) return void (this.note = "Detached HEAD: make a branch first.");
-    askConfirm(MOD, this.gitSpec(kind, opts));
+  gitSpec(kind, { afterCommit = false } = {}) {
+    const name = baseName(this.root);
+    const branch = this.branch ?? "HEAD";
+    const upstream = this.upstream ?? "its upstream";
+    const ahead = this.ahead + (afterCommit ? 1 : 0);
+    if (kind === "fetch") {
+      return { title: `Fetch ${name}?`, detail: "Downloads new commits and branches from the remote. Nothing local changes.", label: "Fetch", action: this.gitAction(["fetch", "--prune"], "Fetching", `Fetched ${name}`) };
+    }
+    if (kind === "pull") {
+      return { title: `Pull into ${branch}?`, detail: `Fast-forward only from ${upstream}. Stops instead of merging if your branch has diverged.`, label: "Pull", action: this.gitAction(["pull", "--ff-only"], "Pulling", `Pulled ${name}`) };
+    }
+    if (kind === "push") {
+      return { title: `Push ${branch}?`, detail: `${afterCommit ? "Your new commit and any others" : plural(ahead, "commit")} go to ${upstream}. Other people will see them.`, label: "Push", danger: true, action: this.gitAction(["push"], "Pushing", `Pushed ${branch}`) };
+    }
+    if (kind === "publish") {
+      return { title: `Publish ${branch}?`, detail: "Pushes the branch to origin and tracks it there. Other people will see it.", label: "Publish", danger: true, action: this.gitAction(["push", "-u", "origin", branch], "Publishing", `Published ${branch}`) };
+    }
+    return this.syncSpec(branch, upstream, ahead, afterCommit);
   },
 
-  // ── index ──────────────────────────────────────────────────────────────────────────────
+  askGit(kind, options) {
+    if (!this.root) {
+      return;
+    }
+    const needsUpstream = (kind === "push" || kind === "sync") && !this.upstream;
+    const resolvedKind = needsUpstream ? "publish" : kind;
+    if (resolvedKind === "publish" && !this.branch) {
+      this.note = "Detached HEAD: make a branch first.";
+      return;
+    }
+    askConfirm(MOD, this.gitSpec(resolvedKind, options));
+  },
+
   indexArgs(action, paths) {
-    if (action === "stage") return ["--literal-pathspecs", "add", "--", ...paths];
-    if (this.head) return ["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...paths];
+    if (action === STAGE) {
+      return ["--literal-pathspecs", "add", "--", ...paths];
+    }
+    if (this.head) {
+      return ["--literal-pathspecs", "reset", "-q", "HEAD", "--", ...paths];
+    }
     return ["--literal-pathspecs", "rm", "--cached", "-r", "-q", "--", ...paths];
   },
 
   async runIndex(action, files) {
-    const paths = files.filter((f) => !f.conflict).map((f) => f.path);
-    for (let i = 0; i < paths.length; i += 200) {
-      const r = await git(this.indexArgs(action, paths.slice(i, i + 200)), { cwd: this.root, on: this.on });
-      if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
+    const paths = files.filter((file) => !file.conflict).map((file) => file.path);
+    for (let i = 0; i < paths.length; i += INDEX_BATCH) {
+      const result = await git(this.indexArgs(action, paths.slice(i, i + INDEX_BATCH)), { cwd: this.root, on: this.on });
+      if (result.code !== 0) {
+        throw commandFailure(result);
+      }
     }
     return paths.length;
   },
 
   // Stage all leaves conflicts alone: staging one marks it resolved with its markers still in.
   index(action, files, cx) {
-    if (!this.root || this.busy || !files?.some((f) => !f.conflict)) return;
+    if (!this.root || this.busy || !files?.some((file) => !file.conflict)) {
+      return;
+    }
     this.busy = true;
     this.note = null;
     cx.notify();
@@ -233,8 +409,8 @@ export const panelMethods = {
       try {
         await this.runIndex(action, files);
         bump(root);
-      } catch (e) {
-        this.note = `${action === "stage" ? "Stage" : "Unstage"} failed: ${e.message}`;
+      } catch (error) {
+        this.note = `${action === STAGE ? "Stage" : "Unstage"} failed: ${error.message}`;
       } finally {
         this.busy = false;
         this.refresh(cx);
@@ -244,173 +420,234 @@ export const panelMethods = {
 
   askDiscard(files) {
     const { restore, trash } = discardPlan(files);
-    const n = restore.length + trash.length;
-    if (!n || !this.root) return;
-    const one = n === 1 ? baseName(restore[0] ?? trash[0]) : null;
+    const count = restore.length + trash.length;
+    if (!count || !this.root) {
+      return;
+    }
+    const single = count === 1 ? baseName(restore[0] ?? trash[0]) : null;
     const steps = [];
-    if (restore.length) steps.push({ cmd: "git", args: ["--literal-pathspecs", "restore", "--worktree", "--", ...restore] });
-    if (trash.length) steps.push({ cmd: "trash", args: trash });
+    if (restore.length) {
+      steps.push({ cmd: "git", args: ["--literal-pathspecs", "restore", "--worktree", "--", ...restore] });
+    }
+    if (trash.length) {
+      steps.push({ cmd: "trash", args: trash });
+    }
     askConfirm(MOD, {
-      title: one ? `Discard changes in ${one}?` : `Discard ${n} changes?`,
-      detail: [restore.length ? `${one ? "It goes" : `${plural(restore.length, "edited file")} go`} back to the last staged or committed version.` : "",
-        trash.length ? `${one ? "This new file goes" : `${plural(trash.length, "new file")} go`} to the Trash.` : "",
-        "Staged changes stay."].filter(Boolean).join(" "),
-      label: "Discard", danger: true,
-      action: { cmd: steps[0].cmd, args: steps[0].args, steps, cwd: this.root, on: this.on ?? null, doing: "Discarding", done: one ? `Discarded ${one}` : `Discarded ${n} changes`, root: this.root },
+      title: single ? `Discard changes in ${single}?` : `Discard ${count} changes?`,
+      detail: discardDetail(restore, trash, single),
+      label: "Discard",
+      danger: true,
+      action: { cmd: steps[0].cmd, args: steps[0].args, steps, cwd: this.root, on: this.on ?? null, doing: "Discarding", done: single ? `Discarded ${single}` : `Discarded ${count} changes`, root: this.root },
     });
   },
 
-  // ── commit ─────────────────────────────────────────────────────────────────────────────
+  loadAmendMessage(cx) {
+    cx.spawn(async (cx) => {
+      const result = await git(["log", "-1", "--format=%B"], { cwd: this.root, on: this.on });
+      if (result.code === 0 && !this.message.value().trim()) {
+        this.message.set_value(result.stdout.trimEnd());
+        this.amendLoaded = result.stdout.trimEnd();
+      }
+      cx.notify();
+    });
+  },
+
   setAmend(on, cx) {
     this.amend = on;
     if (on && !this.message.value().trim() && this.head) {
-      cx.spawn(async (cx) => {
-        const r = await git(["log", "-1", "--format=%B"], { cwd: this.root, on: this.on });
-        if (r.code === 0 && !this.message.value().trim()) {
-          this.message.set_value(r.stdout.trimEnd());
-          this.amendLoaded = r.stdout.trimEnd();
-        }
-        cx.notify();
-      });
+      this.loadAmendMessage(cx);
     } else if (!on && this.amendLoaded && this.message.value() === this.amendLoaded) {
       this.message.set_value("");
       this.amendLoaded = null;
     }
-    if (on) this.amendHead = this.head;
+    if (on) {
+      this.amendHead = this.head;
+    }
     cx.notify();
   },
 
   groups() {
     return {
-      conflicts: this.files.filter((f) => f.conflict),
-      staged: this.files.filter((f) => f.staged),
-      unstaged: this.files.filter((f) => f.unstaged && !f.conflict),
+      conflicts: this.files.filter((file) => file.conflict),
+      staged: this.files.filter((file) => file.staged),
+      unstaged: this.files.filter((file) => file.unstaged && !file.conflict),
     };
   },
 
   primary() {
-    const g = this.groups();
+    const groups = this.groups();
     return primaryAction({
-      amend: this.amend, staged: g.staged.length, unstaged: g.unstaged.length, conflicts: g.conflicts.length,
+      amend: this.amend, staged: groups.staged.length, unstaged: groups.unstaged.length, conflicts: groups.conflicts.length,
       ahead: this.ahead, behind: this.behind, upstream: this.upstream, branch: this.branch, head: this.head,
       message: this.message.value(), busy: this.busy || !this.root,
     });
   },
 
+  commitMode(primary, kind) {
+    if (this.amend) {
+      return AMEND;
+    }
+    return kind ?? (primary.kind === COMMIT_ALL ? COMMIT_ALL : COMMIT);
+  },
+
+  // Returns true when the commit can go ahead; may set a note explaining why not.
+  canCommit(mode, message, groups) {
+    if (!this.root || this.busy || !message || groups.conflicts.length) {
+      return false;
+    }
+    if (mode === COMMIT && !groups.staged.length) {
+      this.note = "Nothing staged. Use Commit All, or stage files first.";
+      return false;
+    }
+    if (mode === COMMIT_ALL && !groups.staged.length && !groups.unstaged.length) {
+      return false;
+    }
+    return mode !== AMEND || Boolean(this.head);
+  },
+
+  async runCommit({ mode, message, root, expectedHead, unstaged }) {
+    if (mode === AMEND) {
+      const head = await git(["rev-parse", "--verify", "HEAD"], { cwd: root, on: this.on });
+      if (head.stdout.trim() !== expectedHead) {
+        throw new Error("the latest commit changed since you chose Amend; choose it again");
+      }
+    }
+    if (mode === COMMIT_ALL) {
+      await this.runIndex(STAGE, unstaged);
+    }
+    const result = await git([COMMIT, ...(mode === AMEND ? ["--amend"] : []), "-m", message], { cwd: root, on: this.on, timeout: WRITE_TIMEOUT_MS });
+    if (result.code !== 0) {
+      throw commandFailure(result);
+    }
+    notify({ title: mode === AMEND ? "Amended" : "Committed", body: result.stdout.split("\n")[0], level: "success", timeout: SUCCESS_TIMEOUT_MS });
+    if (this.message.value().trim() === message) {
+      this.message.set_value("");
+    }
+    this.amend = false;
+    this.amendLoaded = null;
+    bump(root);
+  },
+
   // then: null | "push" | "sync"; kind forces "commit" / "commitAll" from the ⌄ menu.
   commit(cx, then = null, kind = null) {
-    const pa = this.primary();
-    if (!kind && (pa.kind === "sync" || pa.kind === "publish")) return pa.enabled && this.askGit(pa.kind);
-    const g = this.groups();
-    const mode = this.amend ? "amend" : kind ?? (pa.kind === "commitAll" ? "commitAll" : "commit");
-    const msg = this.message.value().trim();
-    if (!this.root || this.busy || !msg || g.conflicts.length) return;
-    if (mode === "commit" && !g.staged.length) return void (this.note = "Nothing staged. Use Commit All, or stage files first.");
-    if (mode === "commitAll" && !g.staged.length && !g.unstaged.length) return;
-    if (mode === "amend" && !this.head) return;
+    const primary = this.primary();
+    if (!kind && (primary.kind === "sync" || primary.kind === "publish")) {
+      return primary.enabled && this.askGit(primary.kind);
+    }
+    const groups = this.groups();
+    const mode = this.commitMode(primary, kind);
+    const message = this.message.value().trim();
+    if (!this.canCommit(mode, message, groups)) {
+      return undefined;
+    }
     const root = this.root;
-    const expected = this.amendHead;
+    const expectedHead = this.amendHead;
     this.busy = true;
     this.note = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      let ok = false;
+      let committed = false;
       try {
-        if (mode === "amend") {
-          const h = await git(["rev-parse", "--verify", "HEAD"], { cwd: root, on: this.on });
-          if (h.stdout.trim() !== expected) throw new Error("the latest commit changed since you chose Amend; choose it again");
-        }
-        if (mode === "commitAll") await this.runIndex("stage", g.unstaged);
-        const r = await git(["commit", ...(mode === "amend" ? ["--amend"] : []), "-m", msg], { cwd: root, on: this.on, timeout: 120000 });
-        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
-        notify({ title: mode === "amend" ? "Amended" : "Committed", body: r.stdout.split("\n")[0], level: "success", timeout: 3000 });
-        if (this.message.value().trim() === msg) this.message.set_value("");
-        this.amend = false;
-        this.amendLoaded = null;
-        ok = true;
-        bump(root);
-      } catch (e) {
-        this.note = `${mode === "amend" ? "Amend" : "Commit"} failed: ${e.message}`;
+        await this.runCommit({ mode, message, root, expectedHead, unstaged: groups.unstaged });
+        committed = true;
+      } catch (error) {
+        this.note = `${mode === AMEND ? "Amend" : "Commit"} failed: ${error.message}`;
       } finally {
         this.busy = false;
         this.refresh(cx);
       }
-      if (ok && then && this.root === root) this.askGit(then, { afterCommit: true });
+      if (committed && then && this.root === root) {
+        this.askGit(then, { afterCommit: true });
+      }
     });
+    return undefined;
   },
 
-  // ── opening things ─────────────────────────────────────────────────────────────────────
   toggleGroup(id, cx) {
-    if (!this.closed.delete(id)) this.closed.add(id);
-    localStorage.setItem("closed", JSON.stringify([...this.closed]));
+    if (!this.closed.delete(id)) {
+      this.closed.add(id);
+    }
+    localStorage.setItem(CLOSED_KEY, JSON.stringify([...this.closed]));
     cx.notify();
   },
 
-  openDiff(f, scope) {
-    showInViewer(MOD, { root: this.root, on: this.on ?? null, path: f.path, scope, untracked: f.untracked }, baseName(f.path));
+  openDiff(file, scope) {
+    showInViewer(MOD, { root: this.root, on: this.on ?? null, path: file.path, scope, untracked: file.untracked }, baseName(file.path));
   },
 
   openFile(path) {
-    showInViewer("vx-files", { root: this.root, on: this.on ?? null, rel: path }, baseName(path));
+    showInViewer(FILES_MOD, { root: this.root, on: this.on ?? null, rel: path }, baseName(path));
   },
 
-  fileMenu(f, scope) {
-    const deleted = scope === "staged" ? f.x === "D" : f.y === "D";
+  fileMenu(file, scope) {
+    const isStaged = scope === STAGED;
+    const deleted = isStaged ? file.x === "D" : file.y === "D";
+    const indexItem = isStaged
+      ? { id: UNSTAGE, icon: "minus", label: "Unstage Changes", cmd: { cmd: UNSTAGE, path: file.path } }
+      : { id: STAGE, icon: "plus", label: "Stage Changes", cmd: { cmd: STAGE, path: file.path }, disabled: file.conflict };
     openScmMenu(this.uid, [
-      { id: "diff", icon: "split", label: "Open Changes", cmd: { cmd: "openDiff", path: f.path, scope } },
-      { id: "file", icon: "file-code", label: "Open File", cmd: { cmd: "openFile", path: f.path }, disabled: deleted },
+      { id: "diff", icon: "split", label: "Open Changes", cmd: { cmd: "openDiff", path: file.path, scope } },
+      { id: "file", icon: "file-code", label: "Open File", cmd: { cmd: "openFile", path: file.path }, disabled: deleted },
       { sep: true, id: "s1" },
-      scope === "staged"
-        ? { id: "unstage", icon: "minus", label: "Unstage Changes", cmd: { cmd: "unstage", path: f.path } }
-        : { id: "stage", icon: "plus", label: "Stage Changes", cmd: { cmd: "stage", path: f.path }, disabled: f.conflict },
-      { id: "discard", icon: "discard", label: "Discard Changes…", color: theme().ansi1, cmd: { cmd: "discard", path: f.path }, disabled: scope === "staged" || f.conflict },
+      indexItem,
+      { id: "discard", icon: "discard", label: "Discard Changes…", color: theme().ansi1, cmd: { cmd: "discard", path: file.path }, disabled: isStaged || file.conflict },
       { sep: true, id: "s2" },
-      { id: "reveal", icon: "folder", label: "Reveal in Finder", cmd: { cmd: "reveal", path: f.path }, disabled: deleted },
-      { id: "copy", icon: "copy", label: "Copy Path", copy: `${this.root}/${f.path}` },
-      { id: "copyrel", icon: "copy", label: "Copy Relative Path", copy: f.path },
+      { id: "reveal", icon: "folder", label: "Reveal in Finder", cmd: { cmd: "reveal", path: file.path }, disabled: deleted },
+      { id: "copy", icon: "copy", label: "Copy Path", copy: `${this.root}/${file.path}` },
+      { id: "copyrel", icon: "copy", label: "Copy Relative Path", copy: file.path },
     ]);
   },
 
+  pullSub(upstream) {
+    if (this.behind) {
+      return `↓${this.behind}`;
+    }
+    return upstream ? "" : "no upstream";
+  },
+
   moreMenu() {
-    const t = theme();
-    const up = this.upstream;
+    const colors = theme();
+    const upstream = this.upstream;
     openScmMenu(this.uid, [
       { header: "Remote", id: "h1" },
-      { id: "pull", icon: "arrow-down", color: t.ansi4, label: "Pull…", sub: this.behind ? `↓${this.behind}` : up ? "" : "no upstream", subColor: t.ansi4, cmd: { cmd: "pull" }, disabled: !up },
-      { id: "push", icon: "arrow-up", color: t.ansi6, label: up ? "Push…" : "Publish Branch…", sub: this.ahead ? `↑${this.ahead}` : "", subColor: t.ansi6, cmd: { cmd: up ? "push" : "publish" }, disabled: !this.branch },
-      { id: "sync", icon: "sync", color: t.accent, label: "Sync…", sub: "pull, then push", cmd: { cmd: "sync" }, disabled: !up },
-      { id: "fetch", icon: "cloud", color: t.muted, label: "Fetch…", cmd: { cmd: "fetch" } },
+      { id: "pull", icon: "arrow-down", color: colors.ansi4, label: "Pull…", sub: this.pullSub(upstream), subColor: colors.ansi4, cmd: { cmd: "pull" }, disabled: !upstream },
+      { id: "push", icon: "arrow-up", color: colors.ansi6, label: upstream ? "Push…" : "Publish Branch…", sub: this.ahead ? `↑${this.ahead}` : "", subColor: colors.ansi6, cmd: { cmd: upstream ? "push" : "publish" }, disabled: !this.branch },
+      { id: "sync", icon: "sync", color: colors.accent, label: "Sync…", sub: "pull, then push", cmd: { cmd: "sync" }, disabled: !upstream },
+      { id: "fetch", icon: "cloud", color: colors.muted, label: "Fetch…", cmd: { cmd: "fetch" } },
       { header: "Stash", id: "h2" },
-      { id: "stash", icon: "archive", color: t.ansi5, label: "Stash Changes…", cmd: { cmd: "stashAsk" }, disabled: !this.files.length },
-      { id: "stash-staged", icon: "archive", color: t.ansi5, label: "Stash Staged…", cmd: { cmd: "stashAsk", staged: true }, disabled: !this.groups().staged.length },
+      { id: "stash", icon: "archive", color: colors.ansi5, label: "Stash Changes…", cmd: { cmd: "stashAsk" }, disabled: !this.files.length },
+      { id: "stash-staged", icon: "archive", color: colors.ansi5, label: "Stash Staged…", cmd: { cmd: "stashAsk", staged: true }, disabled: !this.groups().staged.length },
       { header: "Branch", id: "h3" },
-      { id: "branch", icon: "branch-plus", color: t.ansi2, label: "New Branch…", cmd: { cmd: "branchAsk" } },
-      { id: "graph", icon: "pipeline", color: t.accent, label: "Open Commit Graph", cmd: { cmd: "graph" } },
+      { id: "branch", icon: "branch-plus", color: colors.ansi2, label: "New Branch…", cmd: { cmd: "branchAsk" } },
+      { id: "graph", icon: "pipeline", color: colors.accent, label: "Open Commit Graph", cmd: { cmd: "graph" } },
       { sep: true, id: "s1" },
-      { id: "flat", icon: "list", label: "View as List", checked: this.view === "flat", cmd: { cmd: "view", value: "flat" } },
-      { id: "tree", icon: "list-tree", label: "View as Tree", checked: this.view === "tree", cmd: { cmd: "view", value: "tree" } },
+      { id: VIEW_FLAT, icon: "list", label: "View as List", checked: this.view === VIEW_FLAT, cmd: { cmd: VIEW_COMMAND, value: VIEW_FLAT } },
+      { id: VIEW_TREE, icon: "list-tree", label: "View as Tree", checked: this.view === VIEW_TREE, cmd: { cmd: VIEW_COMMAND, value: VIEW_TREE } },
     ]);
   },
 
   commitMenu() {
-    const t = theme();
-    const g = this.groups();
-    const noMsg = !this.message.value().trim();
-    const all = !g.staged.length;
+    const colors = theme();
+    const groups = this.groups();
+    const noMessage = !this.message.value().trim();
+    const all = !groups.staged.length;
+    const kind = all ? COMMIT_ALL : COMMIT;
     openScmMenu(this.uid, [
-      { id: "c", icon: "commit-check", color: t.accent, label: all ? "Commit All" : "Commit", sub: all ? `${g.unstaged.length}` : `${g.staged.length} staged`, cmd: { cmd: "commit", kind: all ? "commitAll" : "commit" }, disabled: noMsg || this.amend },
-      { id: "cp", icon: "arrow-up", color: t.ansi6, label: all ? "Commit All & Push" : "Commit & Push", cmd: { cmd: "commit", kind: all ? "commitAll" : "commit", then: "push" }, disabled: noMsg || this.amend || !this.branch },
-      { id: "cs", icon: "sync", color: t.ansi4, label: all ? "Commit All & Sync" : "Commit & Sync", cmd: { cmd: "commit", kind: all ? "commitAll" : "commit", then: "sync" }, disabled: noMsg || this.amend || !this.upstream },
+      { id: "c", icon: "commit-check", color: colors.accent, label: all ? "Commit All" : "Commit", sub: all ? `${groups.unstaged.length}` : `${groups.staged.length} staged`, cmd: { cmd: COMMIT, kind }, disabled: noMessage || this.amend },
+      { id: "cp", icon: "arrow-up", color: colors.ansi6, label: all ? "Commit All & Push" : "Commit & Push", cmd: { cmd: COMMIT, kind, then: "push" }, disabled: noMessage || this.amend || !this.branch },
+      { id: "cs", icon: "sync", color: colors.ansi4, label: all ? "Commit All & Sync" : "Commit & Sync", cmd: { cmd: COMMIT, kind, then: "sync" }, disabled: noMessage || this.amend || !this.upstream },
       { sep: true, id: "s1" },
-      { id: "amend", icon: "pencil", color: t.ansi3, label: "Amend Last Commit", checked: this.amend, tip: "Rewrite the latest commit. Careful if it's already pushed.", cmd: { cmd: "amend" }, disabled: !this.head },
-    ], 250);
+      { id: AMEND, icon: "pencil", color: colors.ansi3, label: "Amend Last Commit", checked: this.amend, tip: "Rewrite the latest commit. Careful if it's already pushed.", cmd: { cmd: AMEND }, disabled: !this.head },
+    ], COMMIT_MENU_WIDTH);
   },
 
-  // ── drawing ────────────────────────────────────────────────────────────────────────────
   hoverable(el, key) {
     return el.on_hover((on, cx) => {
-      if (on) this.hot = key;
-      else if (this.hot === key) this.hot = null;
+      if (on) {
+        this.hot = key;
+      } else if (this.hot === key) {
+        this.hot = null;
+      }
       cx.notify();
     });
   },
@@ -420,197 +657,269 @@ export const panelMethods = {
       .bg(tint(color, "26")).text_size(TEXT.tiny).font_medium().text_color(color).child(String(text));
   },
 
-  blocks(t, st) {
-    return h_flex().flex_none().gap(1).children(statBlocks(st.add, st.del).map((b) =>
-      div().size(6).rounded(1).bg(b === "+" ? t.ansi2 : b === "-" ? t.ansi1 : tint(t.dim, "40"))));
+  blockColor(colors, block) {
+    if (block === "+") {
+      return colors.ansi2;
+    }
+    return block === "-" ? colors.ansi1 : tint(colors.dim, "40");
   },
 
-  fileRow(t, f, scope, depth = 0) {
-    const st = scope === "staged" ? this.stats[0][f.path] : this.stats[1][f.path];
-    const letter = scope === "staged" ? (f.x === "A" ? "A" : f.x === "D" ? "D" : "M") : f.untracked ? "U" : f.conflict ? "!" : f.y === "D" ? "D" : "M";
-    const color = f.conflict ? t.ansi1 : markColor(letter === "U" ? "A" : letter, t);
-    const slash = f.path.lastIndexOf("/");
-    const name = f.path.slice(slash + 1);
-    const dir = this.view === "flat" && slash > 0 ? f.path.slice(0, slash) : "";
-    const key = `${scope}:${f.path}`;
-    const sel = this.selected === key;
+  blocks(colors, stat) {
+    return h_flex().flex_none().gap(1).children(statBlocks(stat.add, stat.del).map((block) =>
+      div().size(6).rounded(1).bg(this.blockColor(colors, block))));
+  },
+
+  fileTooltip(file, stat) {
+    const conflict = file.conflict ? ` · ${file.conflictKind}` : "";
+    const counts = stat && !stat.binary ? ` · +${stat.add} −${stat.del}` : "";
+    return `${file.path}${conflict}${counts}\nClick: changes · double-click: file · right-click: more`;
+  },
+
+  fileRowActions(file, scope, key, deleted) {
+    const isStaged = scope === STAGED;
+    const button = (id, icon, label, onClick) => IconButton({ id: `${id}-${key}`, icon, label, size: 20, disabled: this.busy, onClick });
+    const actions = [];
+    if (!deleted) {
+      actions.push(button("of", "file-code", "Open File", () => this.openFile(file.path)));
+    }
+    if (!isStaged && !file.conflict) {
+      actions.push(button("dc", "discard", "Discard Changes…", () => this.askDiscard([file])));
+    }
+    if (!file.conflict) {
+      actions.push(button("st", isStaged ? "minus" : "plus", isStaged ? "Unstage" : "Stage", (cx) => this.index(isStaged ? UNSTAGE : STAGE, [file], cx)));
+    }
+    return actions;
+  },
+
+  clickFile(event, file, scope, key, deleted, cx) {
+    this.selected = key;
+    if (event.click_count >= 2 && !deleted) {
+      this.openFile(file.path);
+    } else {
+      this.openDiff(file, scope);
+    }
+    cx.notify();
+  },
+
+  fileRow(colors, file, scope, depth = 0) {
+    const stat = scope === STAGED ? this.stats[0][file.path] : this.stats[1][file.path];
+    const letter = scope === STAGED ? stagedLetter(file) : unstagedLetter(file);
+    const color = file.conflict ? colors.ansi1 : markColor(letter === "U" ? "A" : letter, colors);
+    const slash = file.path.lastIndexOf("/");
+    const name = file.path.slice(slash + 1);
+    const dir = this.view === VIEW_FLAT && slash > 0 ? file.path.slice(0, slash) : "";
+    const key = `${scope}:${file.path}`;
+    const selected = this.selected === key;
     const hot = this.hot === key;
     const deleted = letter === "D";
-    const btn = (id, icon, label, onClick) => IconButton({ id: `${id}-${key}`, icon, label, size: 20, disabled: this.busy, onClick });
-    const row = h_flex().id(`c-${key}`).h(ROW).flex_none().mx(4).pl(6 + depth * 12).pr(4).gap(6).items_center().rounded(5)
-      .bg(sel ? t.selected : hot ? t.hover : "#00000000").cursor_pointer().text_size(TEXT.body)
-      .tooltip(`${f.path}${f.conflict ? ` · ${f.conflictKind}` : ""}${st && !st.binary ? ` · +${st.add} −${st.del}` : ""}\nClick: changes · double-click: file · right-click: more`)
-      .on_click((e, cx) => {
+    const row = h_flex().id(`c-${key}`).h(ROW_HEIGHT).flex_none().mx(4).pl(6 + depth * INDENT).pr(4).gap(6).items_center().rounded(5)
+      .bg(selected ? colors.selected : hot ? colors.hover : TRANSPARENT).cursor_pointer().text_size(TEXT.body)
+      .tooltip(this.fileTooltip(file, stat))
+      .on_click((event, cx) => this.clickFile(event, file, scope, key, deleted, cx))
+      .on_mouse_down("right", (_e, cx) => {
+        cx.stop_propagation();
         this.selected = key;
-        if (e.click_count >= 2 && !deleted) this.openFile(f.path);
-        else this.openDiff(f, scope);
+        this.fileMenu(file, scope);
         cx.notify();
       })
-      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.selected = key; this.fileMenu(f, scope); cx.notify(); })
-      .child(div().w(2).h(14).flex_none().rounded(1).bg(sel ? t.accent : "#00000000"))
-      .child(FileIcon(this.icons, f.path, { size: 15 }))
+      .child(div().w(2).h(14).flex_none().rounded(1).bg(selected ? colors.accent : TRANSPARENT))
+      .child(FileIcon(this.icons, file.path, { size: 15 }))
       .child(div().flex_shrink(1).min_w(40).max_w(200).truncate().text_color(color).when(deleted, (el) => el.line_through()).child(name))
-      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(t.dim).child(f.conflict ? f.conflictKind : dir));
+      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(file.conflict ? file.conflictKind : dir));
     if (hot) {
-      if (!deleted) row.child(btn("of", "file-code", "Open File", () => this.openFile(f.path)));
-      if (scope !== "staged" && !f.conflict) row.child(btn("dc", "discard", "Discard Changes…", () => this.askDiscard([f])));
-      if (!f.conflict) row.child(btn("st", scope === "staged" ? "minus" : "plus", scope === "staged" ? "Unstage" : "Stage", (cx) => this.index(scope === "staged" ? "unstage" : "stage", [f], cx)));
-    } else if (st && !st.binary && !f.conflict && (st.add || st.del)) row.child(this.blocks(t, st));
+      row.children(this.fileRowActions(file, scope, key, deleted));
+    } else if (stat && !stat.binary && !file.conflict && (stat.add || stat.del)) {
+      row.child(this.blocks(colors, stat));
+    }
     row.child(div().w(16).h(16).flex_none().flex().items_center().justify_center().rounded(4).bg(tint(color, "22"))
       .text_size(TEXT.tiny).font_semibold().text_color(color).child(letter));
     return this.hoverable(row, key);
   },
 
-  // Tree view: folders as headings with their files under them, single-child folders folded.
-  treeRows(t, files, scope) {
-    const root = { dirs: new Map(), files: [] };
-    for (const f of files) {
-      const parts = f.path.split("/");
-      parts.pop();
-      let node = root;
-      for (const p of parts) {
-        if (!node.dirs.has(p)) node.dirs.set(p, { dirs: new Map(), files: [] });
-        node = node.dirs.get(p);
+  folderRow(colors, id, label, depth, open) {
+    return h_flex().id(`d-${id}`).h(ROW_HEIGHT).flex_none().mx(4).pl(INDENT + depth * INDENT).gap(5).items_center().rounded(5).cursor_pointer().hover((style) => style.bg(colors.hover))
+      .text_size(TEXT.small).text_color(colors.muted).on_click((_e, cx) => this.toggleGroup(id, cx))
+      .child(Icon(open ? "chevron-down" : "chevron-right", 11).text_color(colors.dim))
+      .child(FileIcon(this.icons, label.split("/").pop(), { dir: true, open, size: 15 }))
+      .child(div().truncate().child(label));
+  },
+
+  walkTree(colors, node, scope, depth, prefix, out) {
+    for (const [name, child] of [...node.dirs].sort(([a], [b]) => a.localeCompare(b))) {
+      const folded = foldSingleChildren(name, child);
+      const id = `${scope}:${prefix}${folded.label}`;
+      const open = !this.closed.has(id);
+      out.push(this.folderRow(colors, id, folded.label, depth, open));
+      if (open) {
+        this.walkTree(colors, folded.node, scope, depth + 1, `${prefix}${folded.label}/`, out);
       }
-      node.files.push(f);
     }
+    for (const file of node.files.sort((a, b) => a.path.localeCompare(b.path))) {
+      out.push(this.fileRow(colors, file, scope, depth));
+    }
+  },
+
+  treeRows(colors, files, scope) {
     const out = [];
-    const walk = (node, depth, prefix) => {
-      for (const [name, child] of [...node.dirs].sort(([a], [b]) => a.localeCompare(b))) {
-        let label = name;
-        let n = child;
-        while (n.files.length === 0 && n.dirs.size === 1) {
-          const [[k, v]] = [...n.dirs];
-          label += `/${k}`;
-          n = v;
-        }
-        const id = `${scope}:${prefix}${label}`;
-        const open = !this.closed.has(id);
-        out.push(h_flex().id(`d-${id}`).h(ROW).flex_none().mx(4).pl(12 + depth * 12).gap(5).items_center().rounded(5).cursor_pointer().hover((s) => s.bg(t.hover))
-          .text_size(TEXT.small).text_color(t.muted).on_click((_e, cx) => this.toggleGroup(id, cx))
-          .child(Icon(open ? "chevron-down" : "chevron-right", 11).text_color(t.dim))
-          .child(FileIcon(this.icons, label.split("/").pop(), { dir: true, open, size: 15 }))
-          .child(div().truncate().child(label)));
-        if (open) walk(n, depth + 1, `${prefix}${label}/`);
-      }
-      for (const f of node.files.sort((a, b) => a.path.localeCompare(b.path))) out.push(this.fileRow(t, f, scope, depth));
-    };
-    walk(root, 0, "");
+    this.walkTree(colors, buildTree(files), scope, 0, "", out);
     return out;
   },
 
-  groupHead(t, id, label, count, color, icon, actions = []) {
+  groupHead(colors, id, label, count, color, icon, actions = []) {
     const open = !this.closed.has(id);
     return h_flex().id(`g-${id}`).h(26).flex_none().mx(4).pl(6).pr(4).gap(6).items_center().rounded(5).cursor_pointer()
-      .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleGroup(id, cx))
-      .child(Icon(open ? "chevron-down" : "chevron-right", 11).text_color(t.dim))
+      .hover((style) => style.bg(colors.hover)).on_click((_e, cx) => this.toggleGroup(id, cx))
+      .child(Icon(open ? "chevron-down" : "chevron-right", 11).text_color(colors.dim))
       .child(Icon(icon, 13).text_color(color))
-      .child(div().text_size(TEXT.caption).font_semibold().text_color(t.foreground).child(label))
+      .child(div().text_size(TEXT.caption).font_semibold().text_color(colors.foreground).child(label))
       .child(this.pill(count, color))
       .child(div().flex_1())
       .children(actions);
   },
 
-  group(t, id, label, files, scope, color, icon, actions) {
-    if (!files.length) return [];
+  group(colors, id, label, files, scope, color, icon, actions) {
+    if (!files.length) {
+      return [];
+    }
     const open = !this.closed.has(id);
-    const shown = files.slice(0, LIMIT);
-    const out = [this.groupHead(t, id, label, files.length, color, icon, actions)];
-    if (!open) return out;
-    out.push(...(this.view === "tree" ? this.treeRows(t, shown, scope) : shown.map((f) => this.fileRow(t, f, scope))));
-    if (files.length > LIMIT) out.push(Message(`Showing ${LIMIT} of ${files.length}.`));
+    const shown = files.slice(0, SHOWN_FILES_LIMIT);
+    const out = [this.groupHead(colors, id, label, files.length, color, icon, actions)];
+    if (!open) {
+      return out;
+    }
+    out.push(...(this.view === VIEW_TREE ? this.treeRows(colors, shown, scope) : shown.map((file) => this.fileRow(colors, file, scope))));
+    if (files.length > SHOWN_FILES_LIMIT) {
+      out.push(Message(`Showing ${SHOWN_FILES_LIMIT} of ${files.length}.`));
+    }
     return out;
   },
 
-  // The branch strip, the message card and the Commit button.
-  commitBox(t) {
-    const pa = this.primary();
-    const g = this.groups();
-    const info = subjectInfo(this.message.value());
-    const infoColor = info.level === "over" ? t.ansi1 : info.level === "long" ? t.ansi3 : t.dim;
-    const bColor = this.detached ? t.ansi3 : t.ansi2;
-    const branchChip = h_flex().id("c-branch").h(22).min_w(0).px(8).gap(5).items_center().rounded(11).cursor_pointer()
-      .bg(tint(bColor, "1f")).text_size(TEXT.caption).text_color(bColor).hover((s) => s.bg(tint(bColor, "33")))
+  branchChip(colors) {
+    const color = this.detached ? colors.ansi3 : colors.ansi2;
+    return h_flex().id("c-branch").h(22).min_w(0).px(8).gap(5).items_center().rounded(11).cursor_pointer()
+      .bg(tint(color, "1f")).text_size(TEXT.caption).text_color(color).hover((style) => style.bg(tint(color, "33")))
       .tooltip(`${this.branch ?? "detached HEAD"}${this.upstream ? ` → ${this.upstream}` : ""}\nClick: switch or create a branch`)
       .on_click(() => this.branchMenu())
-      .child(Icon("branch", 11)).child(div().min_w(0).truncate().font_medium().child(this.branch ?? `detached ${this.head?.slice(0, 7) ?? ""}`))
+      .child(Icon("branch", 11)).child(div().min_w(0).truncate().font_medium().child(this.branch ?? `detached ${this.head?.slice(0, BRANCH_SHA) ?? ""}`))
       .child(Icon("chevron-down", 10));
-    const syncChip = this.upstream
-      ? h_flex().id("c-sync").h(22).flex_none().px(8).gap(6).items_center().rounded(11).cursor_pointer().bg(t.raised).text_size(TEXT.caption)
-        .hover((s) => s.bg(t.hover)).tooltip(`↓${this.behind} to pull · ↑${this.ahead} to push with ${this.upstream}\nClick: sync…`)
+  },
+
+  syncChip(colors) {
+    if (this.upstream) {
+      return h_flex().id("c-sync").h(22).flex_none().px(8).gap(6).items_center().rounded(11).cursor_pointer().bg(colors.raised).text_size(TEXT.caption)
+        .hover((style) => style.bg(colors.hover)).tooltip(`↓${this.behind} to pull · ↑${this.ahead} to push with ${this.upstream}\nClick: sync…`)
         .on_click(() => this.askGit("sync"))
-        .child(div().text_color(this.behind ? t.ansi4 : t.dim).child(`↓${this.behind}`))
-        .child(div().text_color(this.ahead ? t.ansi6 : t.dim).child(`↑${this.ahead}`))
-      : this.branch && this.head
-        ? h_flex().id("c-publish").h(22).flex_none().px(8).gap(5).items_center().rounded(11).cursor_pointer().bg(t.raised).text_size(TEXT.caption).text_color(t.ansi6)
-          .hover((s) => s.bg(t.hover)).tooltip("Not on the remote yet · click to publish…").on_click(() => this.askGit("publish"))
-          .child(Icon("cloud-upload", 12)).child("Publish")
-        : null;
-    const card = v_flex().id("c-card").flex_none().rounded(8).border_1().border_color(this.amend ? t.ansi3 : t.border).bg(t.input ?? t.background)
-      .on_key_down((e, cx) => {
-        if (e.key === "enter" && e.modifiers?.platform) {
-          cx.stop_propagation();
-          this.commit(cx);
+        .child(div().text_color(this.behind ? colors.ansi4 : colors.dim).child(`↓${this.behind}`))
+        .child(div().text_color(this.ahead ? colors.ansi6 : colors.dim).child(`↑${this.ahead}`));
+    }
+    if (!this.branch || !this.head) {
+      return null;
+    }
+    return h_flex().id("c-publish").h(22).flex_none().px(8).gap(5).items_center().rounded(11).cursor_pointer().bg(colors.raised).text_size(TEXT.caption).text_color(colors.ansi6)
+      .hover((style) => style.bg(colors.hover)).tooltip("Not on the remote yet · click to publish…").on_click(() => this.askGit("publish"))
+      .child(Icon("cloud-upload", 12)).child("Publish");
+  },
+
+  messageCard(colors) {
+    const info = subjectInfo(this.message.value());
+    const infoColor = info.level === "over" ? colors.ansi1 : info.level === "long" ? colors.ansi3 : colors.dim;
+    return v_flex().id("c-card").flex_none().rounded(8).border_1().border_color(this.amend ? colors.ansi3 : colors.border).bg(colors.input ?? colors.background)
+      .on_key_down((event, cx) => {
+        if (event.key !== "enter" || !event.modifiers?.platform) {
+          return;
         }
+        cx.stop_propagation();
+        this.commit(cx);
       })
       .child(Textarea.new(this.message).id("c-msg").w_full().min_h(52).px(8).pt(6).text_size(TEXT.small))
       .child(h_flex().h(24).flex_none().px(6).gap(6).items_center()
-        .when(this.amend, (el) => el.child(h_flex().h(16).px(6).gap(4).items_center().rounded(8).bg(tint(t.ansi3, "26")).text_size(TEXT.tiny).text_color(t.ansi3)
+        .when(this.amend, (el) => el.child(h_flex().h(16).px(6).gap(4).items_center().rounded(8).bg(tint(colors.ansi3, "26")).text_size(TEXT.tiny).text_color(colors.ansi3)
           .child(Icon("pencil", 9)).child("AMEND")))
         .child(div().flex_1())
         .when(info.len > 0, (el) => el.child(div().id("c-len").text_size(TEXT.tiny).text_color(infoColor).tooltip("Subject line length: 50 is tidy, 72 is the limit").child(`${info.len}`))));
-    const solid = pa.enabled;
-    const accent = pa.kind === "amend" ? t.ansi3 : t.accent;
-    const fg = solid ? t.accent_foreground ?? t.background : t.dim;
-    const icon = pa.kind === "sync" ? "sync" : pa.kind === "publish" ? "cloud-upload" : pa.kind === "amend" ? "pencil" : "commit-check";
-    const count = pa.kind === "commit" && g.staged.length ? ` (${g.staged.length})` : pa.kind === "commitAll" ? ` (${g.unstaged.length})` : "";
-    const button = h_flex().id("c-commit-row").h(30).flex_none().rounded(6).overflow_hidden()
-      .bg(solid ? accent : t.raised).border_1().border_color(solid ? accent : t.border)
-      .child(h_flex().id("c-commit").flex_1().h_full().gap(6).items_center().justify_center().text_size(TEXT.small).font_medium().text_color(fg)
-        .tooltip(pa.tip)
-        .when(solid, (el) => el.cursor_pointer().hover((s) => s.bg(tint("#ffffff", "14"))).on_click((_e, cx) => this.commit(cx)))
-        .child(this.busy ? Icon("spinner", 13).spin(SPIN_MS) : Icon(icon, 13))
-        .child(`${pa.label}${count}`)
-        .when(pa.kind === "sync", (el) => el.child(div().text_size(TEXT.caption).child(`${pa.behind}↓ ${pa.ahead}↑`))))
-      .child(div().w(1).h(18).flex_none().bg(solid ? tint(fg, "55") : t.border))
-      .child(div().id("c-commit-more").w(28).h_full().flex_none().flex().items_center().justify_center().cursor_pointer().text_color(fg)
-        .hover((s) => s.bg(tint("#ffffff", "14"))).tooltip("More commit actions")
+  },
+
+  primaryCount(primary, groups) {
+    if (primary.kind === COMMIT && groups.staged.length) {
+      return ` (${groups.staged.length})`;
+    }
+    return primary.kind === COMMIT_ALL ? ` (${groups.unstaged.length})` : "";
+  },
+
+  commitButton(colors) {
+    const primary = this.primary();
+    const groups = this.groups();
+    const solid = primary.enabled;
+    const accent = primary.kind === AMEND ? colors.ansi3 : colors.accent;
+    const foreground = solid ? colors.accent_foreground ?? colors.background : colors.dim;
+    return h_flex().id("c-commit-row").h(30).flex_none().rounded(6).overflow_hidden()
+      .bg(solid ? accent : colors.raised).border_1().border_color(solid ? accent : colors.border)
+      .child(h_flex().id("c-commit").flex_1().h_full().gap(6).items_center().justify_center().text_size(TEXT.small).font_medium().text_color(foreground)
+        .tooltip(primary.tip)
+        .when(solid, (el) => el.cursor_pointer().hover((style) => style.bg(tint(PRESSED_TINT, "14"))).on_click((_e, cx) => this.commit(cx)))
+        .child(this.busy ? Icon("spinner", 13).spin(SPIN_MS) : Icon(primaryIcon(primary.kind), 13))
+        .child(`${primary.label}${this.primaryCount(primary, groups)}`)
+        .when(primary.kind === "sync", (el) => el.child(div().text_size(TEXT.caption).child(`${primary.behind}↓ ${primary.ahead}↑`))))
+      .child(div().w(1).h(18).flex_none().bg(solid ? tint(foreground, "55") : colors.border))
+      .child(div().id("c-commit-more").w(28).h_full().flex_none().flex().items_center().justify_center().cursor_pointer().text_color(foreground)
+        .hover((style) => style.bg(tint(PRESSED_TINT, "14"))).tooltip("More commit actions")
         .on_click(() => this.commitMenu())
         .child(Icon("chevron-down", 12)));
+  },
+
+  dismissNote(cx) {
+    this.note = null;
+    cx.notify();
+  },
+
+  commitBox(colors) {
+    const syncChip = this.syncChip(colors);
     return v_flex().flex_none().px(10).pt(4).pb(10).gap(8)
-      .child(h_flex().gap(6).items_center().child(branchChip).when(Boolean(syncChip), (el) => el.child(syncChip)))
-      .child(card)
-      .child(button)
-      .when(Boolean(this.note), (el) => el.child(h_flex().gap(6).items_start().px(8).py(6).rounded(6).bg(tint(t.ansi1, "1a"))
-        .child(Icon("alert", 12).text_color(t.ansi1))
-        .child(div().flex_1().min_w(0).text_size(TEXT.small).text_color(t.ansi1).whitespace_normal().child(this.note))
-        .child(IconButton({ id: "c-note-x", icon: "x", label: "Dismiss", size: 18, onClick: (cx) => { this.note = null; cx.notify(); } }))));
+      .child(h_flex().gap(6).items_center().child(this.branchChip(colors)).when(Boolean(syncChip), (el) => el.child(syncChip)))
+      .child(this.messageCard(colors))
+      .child(this.commitButton(colors))
+      .when(Boolean(this.note), (el) => el.child(h_flex().gap(6).items_start().px(8).py(6).rounded(6).bg(tint(colors.ansi1, "1a"))
+        .child(Icon("alert", 12).text_color(colors.ansi1))
+        .child(div().flex_1().min_w(0).text_size(TEXT.small).text_color(colors.ansi1).whitespace_normal().child(this.note))
+        .child(IconButton({ id: "c-note-x", icon: "x", label: "Dismiss", size: 18, onClick: (cx) => this.dismissNote(cx) }))));
+  },
+
+  panelHead() {
+    const isTree = this.view === VIEW_TREE;
+    return h_flex().h(34).flex_none().pl(6).pr(6).gap(2).items_center()
+      .child(RepoButton(this, MOD, this.root))
+      .child(div().flex_1())
+      .child(IconButton({ id: "c-view", icon: isTree ? "list" : "list-tree", label: isTree ? "View as List" : "View as Tree", size: 22, onClick: (cx) => this.setView(isTree ? VIEW_FLAT : VIEW_TREE, cx) }))
+      .child(IconButton({ id: "c-refresh", icon: "refresh", label: "Refresh", spinning: Boolean(this.loading || this.busy), size: 22, onClick: (cx) => this.refresh(cx) }))
+      .child(IconButton({ id: "c-more", icon: "more", label: "More actions…", size: 22, onClick: () => this.moreMenu() }));
+  },
+
+  cleanTree(colors) {
+    return h_flex().mx(10).my(4).px(10).py(8).gap(8).items_center().rounded(6).bg(tint(colors.ansi2, "14"))
+      .child(Icon("check", 13).text_color(colors.ansi2)).child(div().text_size(TEXT.small).text_color(colors.muted).child("Working tree clean"));
   },
 
   renderPanel() {
-    const t = theme();
-    const g = this.groups();
-    const head = h_flex().h(34).flex_none().pl(6).pr(6).gap(2).items_center()
-      .child(RepoButton(this, MOD, this.root))
-      .child(div().flex_1())
-      .child(IconButton({ id: "c-view", icon: this.view === "tree" ? "list" : "list-tree", label: this.view === "tree" ? "View as List" : "View as Tree", size: 22, onClick: (cx) => { this.view = this.view === "tree" ? "flat" : "tree"; localStorage.setItem("view", this.view); cx.notify(); } }))
-      .child(IconButton({ id: "c-refresh", icon: "refresh", label: "Refresh", spinning: Boolean(this.loading || this.busy), size: 22, onClick: (cx) => this.refresh(cx) }))
-      .child(IconButton({ id: "c-more", icon: "more", label: "More actions…", size: 22, onClick: () => this.moreMenu() }));
-    const panel = v_flex().id(MOD).size_full().min_w(0).min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).child(head);
-    if (!this.root) return panel.child(Message(this.error ?? "Pick a repo in Workspace, or focus a terminal inside one."));
+    const colors = theme();
+    const groups = this.groups();
+    const panel = v_flex().id(MOD).size_full().min_w(0).min_h(0).overflow_hidden().bg(colors.background).text_color(colors.foreground).child(this.panelHead());
+    if (!this.root) {
+      return panel.child(Message(this.error ?? "Pick a repo in Workspace, or focus a terminal inside one."));
+    }
     const body = v_flex().id("c-body").flex_1().min_h(0).overflow_y_scrollbar().pb(8).gap(1);
-    body.child(this.commitBox(t));
-    body.children(this.group(t, "conflicts", "Merge Changes", g.conflicts, "conflict", t.ansi1, "merge"));
-    body.children(this.group(t, "staged", "Staged Changes", g.staged, "staged", t.ansi2, "check", [
-      IconButton({ id: "ga-unstage", icon: "minus", label: "Unstage All", size: 20, disabled: this.busy, onClick: (cx) => this.index("unstage", g.staged, cx) }),
+    body.child(this.commitBox(colors));
+    body.children(this.group(colors, "conflicts", "Merge Changes", groups.conflicts, "conflict", colors.ansi1, "merge"));
+    body.children(this.group(colors, STAGED, "Staged Changes", groups.staged, STAGED, colors.ansi2, "check", [
+      IconButton({ id: "ga-unstage", icon: "minus", label: "Unstage All", size: 20, disabled: this.busy, onClick: (cx) => this.index(UNSTAGE, groups.staged, cx) }),
     ]));
-    body.children(this.group(t, "unstaged", "Changes", g.unstaged, "unstaged", t.ansi3, "pencil", [
-      IconButton({ id: "ga-discard", icon: "discard", label: "Discard All Changes…", size: 20, disabled: this.busy, onClick: () => this.askDiscard(g.unstaged) }),
-      IconButton({ id: "ga-stage", icon: "plus", label: "Stage All Changes", size: 20, disabled: this.busy, onClick: (cx) => this.index("stage", g.unstaged, cx) }),
+    body.children(this.group(colors, "unstaged", "Changes", groups.unstaged, "unstaged", colors.ansi3, "pencil", [
+      IconButton({ id: "ga-discard", icon: "discard", label: "Discard All Changes…", size: 20, disabled: this.busy, onClick: () => this.askDiscard(groups.unstaged) }),
+      IconButton({ id: "ga-stage", icon: "plus", label: "Stage All Changes", size: 20, disabled: this.busy, onClick: (cx) => this.index(STAGE, groups.unstaged, cx) }),
     ]));
-    if (!this.files.length && !this.loading) body.child(h_flex().mx(10).my(4).px(10).py(8).gap(8).items_center().rounded(6).bg(tint(t.ansi2, "14"))
-      .child(Icon("check", 13).text_color(t.ansi2)).child(div().text_size(TEXT.small).text_color(t.muted).child("Working tree clean")));
-    body.children(this.renderSections(t));
+    if (!this.files.length && !this.loading) {
+      body.child(this.cleanTree(colors));
+    }
+    body.children(this.renderSections(colors));
     return panel.child(body);
   },
 };

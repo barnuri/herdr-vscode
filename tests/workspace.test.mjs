@@ -14,19 +14,19 @@ test("relative paths", () => {
 test("add, remove, rename, move keep everything else", () => {
   const json = { folders: [{ path: "web" }, { path: "srv", name: "S" }], settings: { a: 1 } };
   const added = editFolders(json, "/w", { type: "add", paths: ["/w/infra", "/w/web"] });
-  assert.deepEqual(added.folders.map((f) => f.path), ["web", "srv", "infra"]);
+  assert.deepEqual(added.folders.map((folder) => folder.path), ["web", "srv", "infra"]);
   assert.deepEqual(added.settings, { a: 1 });
-  assert.equal(json.folders.length, 2); // not mutated
+  assert.equal(json.folders.length, 2);
   const removed = editFolders(added, "/w", { type: "remove", path: "/w/web" });
-  assert.deepEqual(removed.folders.map((f) => f.path), ["srv", "infra"]);
+  assert.deepEqual(removed.folders.map((folder) => folder.path), ["srv", "infra"]);
   const renamed = editFolders(removed, "/w", { type: "rename", path: "/w/srv", name: "srv" });
-  assert.deepEqual(renamed.folders[0], { path: "srv" }); // back to its own name: no `name`
+  assert.deepEqual(renamed.folders[0], { path: "srv" });
   const moved = editFolders(added, "/w", { type: "move", path: "/w/infra", to: 0 });
-  assert.deepEqual(moved.folders.map((f) => f.path), ["infra", "web", "srv"]);
+  assert.deepEqual(moved.folders.map((folder) => folder.path), ["infra", "web", "srv"]);
   assert.match(stringifyWorkspace(moved), /^\{\n\t"folders"/);
 });
 
 test("new workspace round-trips", () => {
   const json = newWorkspace("/w", ["/w/a", "/w/b"]);
-  assert.deepEqual(rootsFromWorkspace("/w/x.code-workspace", json).map((r) => r.path), ["/w/a", "/w/b"]);
+  assert.deepEqual(rootsFromWorkspace("/w/x.code-workspace", json).map((root) => root.path), ["/w/a", "/w/b"]);
 });

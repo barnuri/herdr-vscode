@@ -4,7 +4,7 @@ import { languageOf, lexLine, lexLines } from "../shared/syntax-core.js";
 import { iconFor } from "../shared/icons-core.js";
 import { readFileSync } from "node:fs";
 
-const kinds = (runs) => runs.filter((r) => r.kind).map((r) => `${r.kind}:${r.text}`);
+const kinds = (runs) => runs.filter((run) => run.kind).map((run) => `${run.kind}:${run.text}`);
 
 test("languages", () => {
   assert.equal(languageOf("a/b/App.tsx"), "js");
@@ -15,8 +15,8 @@ test("languages", () => {
 });
 
 test("js line", () => {
-  const k = kinds(lexLine('const x = foo("hi", 42); // done', "js").runs);
-  assert.deepEqual(k, ["keyword:const", "fn:foo", 'string:"hi"', "number:42", "comment:// done"]);
+  const jsKinds = kinds(lexLine('const x = foo("hi", 42); // done', "js").runs);
+  assert.deepEqual(jsKinds, ["keyword:const", "fn:foo", 'string:"hi"', "number:42", "comment:// done"]);
   assert.deepEqual(kinds(lexLine("const url = 'http://x';", "js").runs), ["keyword:const", "string:'http://x'"]);
 });
 
@@ -34,7 +34,7 @@ test("yaml and json keys, shell comments", () => {
 });
 
 test("icon lookup against the built table", () => {
-  const t = JSON.parse(readFileSync(new URL("../mods/vx-icons/icons.json", import.meta.url), "utf8"));
-  assert.match(iconFor(t, "package.json"), /nodejs\.svg$/);
-  assert.match(iconFor(t, "src", { dir: true, open: true }), /folder-src-open\.svg$/);
+  const table = JSON.parse(readFileSync(new URL("../mods/vx-icons/icons.json", import.meta.url), "utf8"));
+  assert.match(iconFor(table, "package.json"), /nodejs\.svg$/);
+  assert.match(iconFor(table, "src", { dir: true, open: true }), /folder-src-open\.svg$/);
 });

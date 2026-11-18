@@ -5,8 +5,8 @@ import { matchPath, rankFiles, runsOf, parseQuery, symbolsOf, commandLabel, keyL
 test("matchPath: positions of the matched letters", () => {
   assert.deepEqual(matchPath("src/app/page.tsx", "page").at, [8, 9, 10, 11]);
   assert.deepEqual(matchPath("src/app/page.tsx", "app").at, [4, 5, 6]);
-  const s = matchPath("src/components/Card.tsx", "cmcard");
-  assert.ok(s && s.at.length === 6);
+  const scattered = matchPath("src/components/Card.tsx", "cmcard");
+  assert.ok(scattered && scattered.at.length === 6);
   assert.equal(matchPath("a/b.ts", "zz"), null);
 });
 
@@ -18,9 +18,9 @@ test("matchPath: words must all match; one may match the repo name", () => {
 
 test("rankFiles keeps positions and ranks name hits first", () => {
   const files = ["src/components/Card.tsx", "docs/scorecard.md", "src/app/page.tsx"].map((rel) => ({ root: { name: "w" }, rel }));
-  const r = rankFiles(files, "card");
-  assert.equal(r[0].rel, "src/components/Card.tsx");
-  assert.deepEqual(r[0].at, [15, 16, 17, 18]);
+  const ranked = rankFiles(files, "card");
+  assert.equal(ranked[0].rel, "src/components/Card.tsx");
+  assert.deepEqual(ranked[0].at, [15, 16, 17, 18]);
 });
 
 test("runsOf splits a label into hit / plain runs", () => {
@@ -54,7 +54,7 @@ test("symbolsOf: classes, functions, arrows, methods, types", () => {
     "def handler(event):",
     "## Install",
   ].join("\n");
-  assert.deepEqual(symbolsOf(src).map((s) => [s.name, s.kind, s.line]), [
+  assert.deepEqual(symbolsOf(src).map((symbol) => [symbol.name, symbol.kind, symbol.line]), [
     ["Store", "class", 1], ["load", "method", 2], ["Plan", "interface", 6], ["Id", "type", 7],
     ["formatPrice", "function", 8], ["total", "function", 9], ["LIMIT", "variable", 10], ["handler", "function", 11], ["Install", "heading", 12],
   ]);
