@@ -286,7 +286,7 @@ export const panelMethods = {
   runCmd(command, cx) {
     const file = command.path ? this.files.find((candidate) => candidate.path === command.path) : null;
     if (REMOTE_COMMANDS.has(command.cmd)) {
-      return this.askGit(command.cmd);
+      return this.askGit(command.cmd, {}, cx);
     }
     switch (command.cmd) {
       case COMMIT: return this.commit(cx, command.then ?? null, command.kind ?? null);
@@ -400,8 +400,9 @@ export const panelMethods = {
     return this.syncSpec(branch, upstream, ahead, afterCommit);
   },
 
-  askGit(kind, options) {
-    if (!this.root) {
+  // Fetch, pull, push, sync and publish run with the primary button's spinner until git ends.
+  askGit(kind, options, cx) {
+    if (!this.root || this.busy) {
       return;
     }
     const needsUpstream = (kind === "push" || kind === "sync") && !this.upstream;
@@ -410,7 +411,17 @@ export const panelMethods = {
       this.note = "Detached HEAD: make a branch first.";
       return;
     }
-    runAction(this.gitSpec(resolvedKind, options).action);
+    this.busy = true;
+    this.note = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        await runAction(this.gitSpec(resolvedKind, options).action);
+      } finally {
+        this.busy = false;
+        this.refresh(cx);
+      }
+    });
   },
 
   indexArgs(action, paths) {
@@ -571,7 +582,7 @@ export const panelMethods = {
   commit(cx, then = null, kind = null) {
     const primary = this.primary();
     if (!kind && (primary.kind === "sync" || primary.kind === "publish")) {
-      return primary.enabled && this.askGit(primary.kind);
+      return primary.enabled && this.askGit(primary.kind, {}, cx);
     }
     const groups = this.groups();
     const mode = this.commitMode(primary, kind);
@@ -597,7 +608,7 @@ export const panelMethods = {
         this.refresh(cx);
       }
       if (committed && then && this.root === root) {
-        this.askGit(then, { afterCommit: true });
+        this.askGit(then, { afterCommit: true }, cx);
       }
     });
     return undefined;
