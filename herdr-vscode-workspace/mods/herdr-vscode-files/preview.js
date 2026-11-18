@@ -4,7 +4,7 @@ import { theme, readTextFile, writeTextFile, exec, appHome, shared, setShared } 
 import { git, bump } from "./ws.js";
 import { parseBlame, heat, shortAge, NOT_COMMITTED } from "./blame-core.js";
 import { parseLog, LOG_FORMAT, parseHunks } from "./git-core.js";
-import { LexCache, languageOf, syntaxColors, editorSyntax } from "./syntax-core.js";
+import { LexCache, languageOf, syntaxColors, editorSyntax, editorLanguageOf } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, codeFont, codeSize, codeLineHeight, tabSpaces, codeWrap, tint } from "./ui.js";
 import { viewerValue, viewerTab, keptTabs, showInViewer } from "./tabs.js";
 import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
@@ -595,7 +595,7 @@ export const previewMethods = {
     }
     const colors = syntaxColors(theme());
     this.editor = EditorState.new({
-      language: languageOf(this.file.rel) ?? undefined, value: this.text, font_family: codeFont(), font_size: codeSize(), soft_wrap: codeWrap(),
+      language: editorLanguageOf(this.file.rel) ?? undefined, value: this.text, font_family: codeFont(), font_size: codeSize(), soft_wrap: codeWrap(),
       syntax: editorSyntax(colors),
     });
     this.saved = this.text;
