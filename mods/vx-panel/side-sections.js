@@ -2,7 +2,7 @@
 // (layout.resize), so the layout remembers it like any other click.
 import { div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { layout, run, openOverlay } from "herdr";
+import { layout, run } from "herdr";
 import { findNode } from "./layout-core.js";
 import { Icon } from "./ui.js";
 
@@ -11,12 +11,8 @@ const OPEN_PX = 220;
 const OPEN_SLACK_PX = 2;
 const CHEVRON_SIZE = 14;
 const TITLE_TEXT_SIZE = 11;
-const VISIBILITY_MENU_MOD = "vx-activity";
-const VISIBILITY_MENU_WIDTH = 220;
-const VISIBILITY_MENU_ROWS = 10;
-const VISIBILITY_MENU_ROW_PX = 26;
-const VISIBILITY_MENU_PAD_PX = 24;
-const VISIBILITY_MENU_HEIGHT = VISIBILITY_MENU_ROWS * VISIBILITY_MENU_ROW_PX + VISIBILITY_MENU_PAD_PX;
+// vx-activity opens the menu sized to its real rows (built-in views, extensions, sections).
+const VISIBILITY_MENU_COMMAND = "vx-activity.visibility";
 
 const openSizeKey = (block) => `open:${block}`;
 
@@ -65,7 +61,7 @@ export function SectionHead(t, { block, title, open, right = [], count }) {
     })
     .on_mouse_down("right", (_event, cx) => {
       cx.stop_propagation();
-      openOverlay({ mod: VISIBILITY_MENU_MOD, kind: "popup", width: VISIBILITY_MENU_WIDTH, height: VISIBILITY_MENU_HEIGHT, props: { visibilityMenu: true } });
+      run(VISIBILITY_MENU_COMMAND);
     })
     .child(Icon(open ? "chevron-down" : "chevron-right", CHEVRON_SIZE).text_color(t.muted))
     .child(div().flex_1().min_w(0).truncate().child(title.toUpperCase()))

@@ -5,6 +5,8 @@ import { treeMethods } from "./tree.js";
 import { previewMethods } from "./preview.js";
 import { timelineMethods } from "./timeline.js";
 import { loadIcons } from "./icons.js";
+import { untitledMethods } from "./untitled.js";
+import SaveAsDialog from "./save-as-dialog.js";
 
 class VxFiles extends View {
   static FOLLOW_MS = 400;
@@ -16,6 +18,10 @@ class VxFiles extends View {
     const initProps = props() ?? given ?? {};
     if (initProps.menu) {
       this.menu = initProps.menu;
+      return;
+    }
+    if (initProps.saveAs) {
+      this.saveAs = new SaveAsDialog(initProps.saveAs, cx);
       return;
     }
     loadIcons(this, cx);
@@ -71,6 +77,9 @@ class VxFiles extends View {
   }
 
   render() {
+    if (this.saveAs) {
+      return this.saveAs.render();
+    }
     if (this.menu) {
       return this.renderMenu();
     }
@@ -84,5 +93,5 @@ class VxFiles extends View {
   }
 }
 
-Object.assign(VxFiles.prototype, treeMethods, previewMethods, timelineMethods);
+Object.assign(VxFiles.prototype, treeMethods, previewMethods, timelineMethods, untitledMethods);
 export default VxFiles;

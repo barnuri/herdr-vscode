@@ -1,0 +1,8 @@
+{
+  "id": "updates",
+  "name": "Updates",
+  "title": "Updates: Herdr and herdr-core",
+  "icon": "mods/vx-updates/icon.svg",
+  "view": { "mod": "vx-updates" },
+  "badge": "vx.updates.badge"
+}

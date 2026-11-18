@@ -1,4 +1,9 @@
-const STATUS_RANK = { blocked: 5, working: 4, done: 3, idle: 2, unknown: 1 };
+const STATUS_RANK = { blocked: 5, working: 4, orch: 3.5, done: 3, idle: 2, unknown: 1 };
+const ORCH_STATUS = "orch";
+const ORCH_TTL_SECS = 120;
+const ORCH_MAX_SUMMARY = 200;
+const MS_PER_SECOND = 1000;
+const LIVE_JOB = "live";
 const IDLE_AGENT_STATUSES = new Set(["idle", "done"]);
 const SHELL_STATUS = "shell";
 const BUSY_STATUS = "running";
@@ -8,9 +13,13 @@ const SHELL_TITLE = /^Current Folder:/;
 export const SORTS = ["opened", "status", "name"];
 export const GROUPINGS = ["folder", "tree"];
 // Keys shared with herdr-folders in ~/.local/state/herdr-folders/state.json, with their types.
-const PREF_TYPES = { sort: "string", grouping: "string", spacing: "string", confirmKill: "boolean", collapsible: "boolean", collapsed: "object" };
+const PREF_TYPES = {
+  sort: "string", grouping: "string", spacing: "string", confirmKill: "boolean", collapsible: "boolean", collapsed: "object", cardBackgrounds: "boolean",
+};
 
-export const DEFAULT_PREFS = { sort: "opened", grouping: "folder", spacing: "comfortable", confirmKill: false, collapsible: true, collapsed: {} };
+export const DEFAULT_PREFS = {
+  sort: "opened", grouping: "folder", spacing: "comfortable", confirmKill: false, collapsible: true, collapsed: {}, cardBackgrounds: true,
+};
 
 export function pickPrefs(parsed) {
   const prefs = { ...DEFAULT_PREFS };
@@ -68,9 +77,10 @@ function terminalStatus(pane) {
   return pane.program?.shell === false ? BUSY_STATUS : SHELL_STATUS;
 }
 
-function rowOf(pane, place) {
+function rowOf(pane, place, orchOf) {
   const isAgent = pane.status !== null && pane.status !== undefined;
   const label = pane.program?.name ?? pane.app ?? "shell";
+  const orchSummary = isAgent && IDLE_AGENT_STATUSES.has(pane.status) ? orchOf(pane) : null;
   return {
     pane: pane.pane,
     terminal: pane.terminal,
@@ -79,7 +89,8 @@ function rowOf(pane, place) {
     spaceName: place?.spaceName ?? "",
     tabName: place?.tabName ?? "",
     kind: isAgent ? "agent" : "terminal",
-    status: isAgent ? pane.status : terminalStatus(pane),
+    status: orchSummary ? ORCH_STATUS : isAgent ? pane.status : terminalStatus(pane),
+    orchSummary,
     label,
     title: displayTitle(pane.title, label),
     program: pane.program ?? null,
@@ -103,7 +114,8 @@ function summarize(folder) {
 
 // Groups terminal panes by their repo root (from `roots`, keyed by cwd) or else their cwd, in
 // Herdr's order: spaces, then tabs, then panes, as they were opened.
-export function groupRunning({ panes, spaces = [], roots = {} }) {
+// `orchOf(pane)` names the orch work an idle agent still runs (see orchLookup), else null.
+export function groupRunning({ panes, spaces = [], roots = {}, orchOf = () => null }) {
   const places = spaceIndex(spaces);
   const folders = new Map();
   for (const pane of panes) {
@@ -114,7 +126,7 @@ export function groupRunning({ panes, spaces = [], roots = {} }) {
     if (!folders.has(path)) {
       folders.set(path, { path, name: baseName(path), isRepo: Boolean(roots[pane.cwd]), rows: [] });
     }
-    folders.get(path).rows.push(rowOf(pane, places.get(pane.tab)));
+    folders.get(path).rows.push(rowOf(pane, places.get(pane.tab), orchOf));
   }
   return [...folders.values()].map(summarize);
 }
@@ -140,7 +152,7 @@ export function sortFolders(folders, mode = "opened") {
 }
 
 const isIdleShell = (row) => row.kind === "terminal" && row.status === SHELL_STATUS;
-const isIdleAgent = (row) => row.kind === "agent" && IDLE_AGENT_STATUSES.has(row.status);
+const isIdleAgent = (row) => row.kind === "agent" && IDLE_AGENT_STATUSES.has(row.status) && !row.orchSummary;
 
 const CLOSE_SELECTORS = {
   "empty-folders": (folders) => folders.filter((folder) => folder.rows.every(isIdleShell)).flatMap((folder) => folder.rows),
@@ -207,4 +219,92 @@ export function buildTree(folders) {
     topPath = `${topPath}/${next.segment}`;
   }
   return [...top.children.values()].map((child) => convertNode(child, topPath)).sort(byName);
+}
+
+const GIT_MARKS = [["behind", "↓"], ["ahead", "↑"], ["added", "+"], ["untracked", "?"], ["modified", "±"], ["deleted", "-"], ["conflicts", "!"]];
+const MODIFIED_STATES = new Set(["M", "T", "R", "C"]);
+
+// Counts like the minimal-git prompt, from git-core's parseStatus (porcelain v1 -b).
+export function gitCounts(status) {
+  const counts = { branch: status.branch, behind: status.behind, ahead: status.ahead, added: 0, untracked: 0, modified: 0, deleted: 0, conflicts: 0 };
+  for (const file of status.files) {
+    if (file.untracked) {
+      counts.untracked++;
+    } else if (file.conflict) {
+      counts.conflicts++;
+    } else {
+      counts.added += file.x === "A" ? 1 : 0;
+      counts.modified += MODIFIED_STATES.has(file.x) || MODIFIED_STATES.has(file.y) ? 1 : 0;
+      counts.deleted += file.x === "D" || file.y === "D" ? 1 : 0;
+    }
+  }
+  return counts;
+}
+
+// "main ↓1 ↑2 +3 ?4 ±5 -6 !7", or "main =" when clean, like herdr-folders.
+export function formatGitLine(counts) {
+  const branch = counts.branch ?? "detached";
+  const marks = GIT_MARKS.filter(([key]) => counts[key] > 0).map(([key, mark]) => `${mark}${counts[key]}`);
+  return marks.length ? `${branch} ${marks.join(" ")}` : `${branch} =`;
+}
+
+function activeSummary(record, nowMs) {
+  if (!record || typeof record !== "object" || record.active !== true || !Number.isFinite(record.updated_at)) {
+    return null;
+  }
+  if (nowMs / MS_PER_SECOND - record.updated_at > ORCH_TTL_SECS) {
+    return null;
+  }
+  const summary = typeof record.summary === "string" ? record.summary.trim().slice(0, ORCH_MAX_SUMMARY) : "";
+  return summary || "orch running";
+}
+
+// ~/.harness-orch/activity/*.json, one record per line: pane id -> summary of active, fresh work.
+export function parseActivity(text, nowMs) {
+  const byPane = new Map();
+  for (const line of String(text ?? "").split("\n")) {
+    let record = null;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const summary = activeSummary(record, nowMs);
+    if (summary && typeof record.pane === "string" && record.pane) {
+      byPane.set(record.pane, summary);
+    }
+  }
+  return byPane;
+}
+
+// `hc ls --json --all --label orch=1`: live job count per parent terminal.
+export function parseOrchJobs(json) {
+  let data = null;
+  try {
+    data = typeof json === "string" ? JSON.parse(json) : json;
+  } catch {
+    return new Map();
+  }
+  const byParent = new Map();
+  for (const job of Array.isArray(data?.terminals) ? data.terminals : []) {
+    if (job?.state === LIVE_JOB && typeof job.parent === "string") {
+      byParent.set(job.parent, (byParent.get(job.parent) ?? 0) + 1);
+    }
+  }
+  return byParent;
+}
+
+const bareAddress = (terminal) => String(terminal ?? "").split("/").pop();
+
+// The orchOf for groupRunning: an activity record for the pane or terminal, else live child jobs.
+export function orchLookup({ activity = new Map(), jobs = new Map() }) {
+  return (pane) => {
+    const terminal = bareAddress(pane.terminal);
+    const own = activity.get(pane.pane) ?? activity.get(terminal);
+    if (own) {
+      return own;
+    }
+    const count = jobs.get(terminal) ?? 0;
+    return count > 0 ? `${count} orch job${count === 1 ? "" : "s"} running` : null;
+  };
 }

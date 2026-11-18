@@ -152,6 +152,13 @@
                   }
                 },
                 {
+                  "id": "projects",
+                  "type": "block",
+                  "content": {
+                    "mod": "vx-projects"
+                  }
+                },
+                {
                   "id": "spaces",
                   "type": "block",
                   "content": {

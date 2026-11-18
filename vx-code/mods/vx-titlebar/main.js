@@ -1,12 +1,14 @@
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { theme, layout, run, window, settings, openOverlay, props, nextCommand, checking, spaces } from "herdr";
+import { theme, layout, run, window, settings, openOverlay, props, nextCommand, checking, spaces, updates } from "herdr";
 import { workspace, ctx } from "./ws.js";
 import { quickMethods, QO_ROW, QO_ROWS, QO_HEAD } from "./quickopen.js";
 import { emptyNav, navVisit, navStep } from "./nav-core.js";
 import { TEXT, Icon } from "./ui.js";
 import { loadIcons } from "./icons.js";
 import { findNode } from "./layout-core.js";
+import { versionsLabel, UPDATES_VIEW } from "./updates-core.js";
+import UpdatesWorker from "./updates-worker.js";
 
 class VxTitlebar extends View {
   static MOD = "vx-titlebar";
@@ -26,6 +28,7 @@ class VxTitlebar extends View {
   static CENTER_WIDTH_RATIO = 0.34;
   static GOTO_PREFIXES = { goto: "", commands: "> ", symbols: "@", line: ":", help: "?" };
   static STEPS = { back: -1, forward: 1 };
+  static VERSIONS_MIN_WIDTH = 900;
 
   init(given, cx) {
     const options = props() ?? given ?? {};
@@ -39,6 +42,8 @@ class VxTitlebar extends View {
       return;
     }
     cx.timer.every(VxTitlebar.TRACK_MS, (cx) => this.track(cx));
+    this.updatesWorker = new UpdatesWorker();
+    this.updatesWorker.start(cx);
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();
@@ -115,6 +120,19 @@ class VxTitlebar extends View {
     return VxTitlebar.DEFAULT_LIGHTS_PADDING;
   }
 
+  // Like herdr's auto-update status item: "app 1.2.3 · core 0.4.0", then "↑ 1.2.4" when one waits.
+  versions(t, stop) {
+    const label = versionsLabel(updates());
+    if (!label) {
+      return div();
+    }
+    return h_flex().id("tb-versions").h(24).px(6).mr(4).gap(6).flex_none().items_center().rounded(5).cursor_pointer()
+      .text_size(TEXT.caption).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.muted)).tooltip("Updates")
+      .on_mouse_down("left", stop).on_click(() => run(`vx-activity.${UPDATES_VIEW}`))
+      .child(label.text)
+      .when(Boolean(label.waiting), (el) => el.child(div().text_color(t.accent).font_medium().child(`↑ ${label.waiting}`)));
+  }
+
   render() {
     if (this.quick) {
       return this.renderQuick();
@@ -155,6 +173,7 @@ class VxTitlebar extends View {
         .on_mouse_down("left", stop).on_click(() => this.openGoto())
         .child(Icon("search", 12)).child(div().truncate().child(ws?.file ? `${label} (Workspace)` : label)))
       .child(h_flex().flex_1().min_w(0).h_full().pr(8).gap(2).items_center().justify_end()
+        .when(this.width >= VxTitlebar.VERSIONS_MIN_WIDTH, (el) => el.child(this.versions(t, stop)))
         .child(toggle("look", "layout", "Customize Layout (Settings › Look)", false, () => run("app.settings", { section: "look" })))
         .when(Boolean(side), (el) => el.child(toggle("side", "sidebar", "Toggle Side Bar (⌘B)", !side.hidden, () => run("layout.toggle", { id: "sidebar" }))))
         .when(Boolean(bottom), (el) => el.child(toggle("bottom", "panel", "Toggle Panel (⌘J)", !bottom.hidden, () => run("vx-activity.panel"))))

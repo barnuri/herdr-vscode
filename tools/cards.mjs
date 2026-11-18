@@ -6,13 +6,14 @@ export const CARDS = {
   "vx-status": ["vx-status"],
   "vx-icons": ["vx-icons"],
   "vx-running": ["vx-running"],
+  "vx-projects": ["vx-projects"],
 };
 
 export const LAYOUT_CARDS = {
   "vx-code": {
     layout: "vx-code",
-    // These open as tabs at runtime, so the layout doesn't name them.
-    extra: ["vx-graph"],
+    // These open at runtime (graph tabs, the vx-updates extension), so the layout does not name them.
+    extra: ["vx-graph", "vx-updates"],
     themes: ["one-monokai"],
     keys: {
       "layout:vx-code": {

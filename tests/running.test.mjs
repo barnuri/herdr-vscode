@@ -88,3 +88,50 @@ test("pickPrefs keeps typed keys and fills defaults", () => {
   assert.deepEqual(prefs.collapsed, { "/a": true });
   assert.equal(prefs.width, undefined);
 });
+
+test("formatGitLine counts like the minimal-git prompt", async () => {
+  const { gitCounts, formatGitLine } = await import("../mods/vx-running/running-core.js");
+  const { parseStatus } = await import("../mods/vx-running/git-core.js");
+  const clean = parseStatus("## main...origin/main\0");
+  assert.equal(formatGitLine(gitCounts(clean)), "main =");
+  const dirty = parseStatus(["## dev...origin/dev [ahead 2, behind 1]", "A  new.js", "?? x.txt", " M a.js", "MM b.js", " D c.js", "UU d.js", ""].join("\0"));
+  assert.equal(formatGitLine(gitCounts(dirty)), "dev ↓1 ↑2 +1 ?1 ±2 -1 !1");
+  assert.equal(formatGitLine({ branch: null, behind: 0, ahead: 0, added: 0, untracked: 0, modified: 0, deleted: 0, conflicts: 0 }), "detached =");
+});
+
+test("orch: an idle agent with fresh orch activity or live child jobs shows as orch", async () => {
+  const { parseActivity, parseOrchJobs, orchLookup } = await import("../mods/vx-running/running-core.js");
+  const now = 1_000_000_000;
+  const activity = parseActivity([
+    JSON.stringify({ active: true, updated_at: now / 1000 - 10, summary: "2 of 5 nodes", pane: "p1" }),
+    JSON.stringify({ active: true, updated_at: now / 1000 - 500, summary: "stale", pane: "p2" }),
+    JSON.stringify({ active: false, updated_at: now / 1000, pane: "p3" }),
+    "not json",
+  ].join("\n"), now);
+  assert.deepEqual([...activity], [["p1", "2 of 5 nodes"]]);
+  const jobs = parseOrchJobs({ terminals: [{ state: "live", parent: "t5" }, { state: "live", parent: "t5" }, { state: "finished", parent: "t6" }] });
+  assert.deepEqual([...jobs], [["t5", 2]]);
+  assert.deepEqual([...parseOrchJobs("{bad")], []);
+  const orchOf = orchLookup({ activity, jobs });
+  const folders = groupRunning({
+    panes: [
+      pane({ pane: "p1", terminal: "t1", status: "idle" }),
+      pane({ pane: "p4", terminal: "mac/t5", status: "done" }),
+      pane({ pane: "p5", terminal: "t5", status: "working" }),
+      pane({ pane: "p6", terminal: "t7", status: "idle" }),
+    ],
+    spaces,
+    orchOf,
+  });
+  const rows = folders[0].rows;
+  assert.deepEqual(rows.map((row) => row.status), ["orch", "orch", "working", "idle"]);
+  assert.equal(rows[0].orchSummary, "2 of 5 nodes");
+  assert.equal(rows[1].orchSummary, "2 orch jobs running");
+  assert.equal(folders[0].status, "working");
+  assert.deepEqual(planClose(folders, "idle-agents-and-empty-folders").map((row) => row.pane), ["p6"]);
+});
+
+test("pickPrefs reads cardBackgrounds", () => {
+  assert.equal(pickPrefs({}).cardBackgrounds, true);
+  assert.equal(pickPrefs({ cardBackgrounds: false }).cardBackgrounds, false);
+});

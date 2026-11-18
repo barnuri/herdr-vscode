@@ -2,21 +2,26 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, panes, spaces, run, props, checking, watchFolder, home } from "herdr";
 import { repoTop, baseName } from "./ws.js";
-import { askConfirm, confirmMethods } from "./actions.js";
-import { TEXT, Icon, IconButton, FileIcon, Dot, ConfirmView } from "./ui.js";
+import { confirmMethods } from "./actions.js";
+import { TEXT, SPIN_MS, Icon, IconButton, FileIcon, Dot, ConfirmView } from "./ui.js";
 import { loadIcons } from "./icons.js";
 import { groupRunning, sortFolders, buildTree, planClose, SORTS, GROUPINGS, CLOSE_MODES } from "./running-core.js";
 import { loadPrefs, savePrefs, DEFAULT_PREFS } from "./running-prefs.js";
+import RunningMenu from "./running-menu.js";
+import RunningProbe from "./running-probe.js";
 
 class VxRunning extends View {
   static MOD = "vx-running";
   static ROW_HEIGHT = { comfortable: 24, compact: 20 };
+  static LINE_HEIGHT = 18;
+  static CARD_PAD_PX = 3;
+  static SPINNER_PX = 10;
+  static SPINNING = new Set(["working", "orch"]);
   static INDENT_PX = 14;
   static ICON_PX = 14;
   static CHEVRON_PX = 12;
   static ROOTS_REFRESH_MS = 2000;
   static STATE_DIR = ".local/state/herdr-folders";
-  static HERDR_APP = "herdr-app";
   static DIR_KEY_PREFIX = "dir:";
   static SORT_LABELS = { opened: "Opened", status: "Status", name: "Name" };
   static CLOSE_LABELS = {
@@ -27,7 +32,7 @@ class VxRunning extends View {
   };
 
   static statusColor(status, colors) {
-    const byStatus = { working: colors.working, blocked: colors.blocked, done: colors.done, idle: colors.idle, running: colors.ansi4 };
+    const byStatus = { working: colors.working, orch: colors.ansi5, blocked: colors.blocked, done: colors.done, idle: colors.idle, running: colors.ansi4 };
     return byStatus[status] ?? colors.dim;
   }
 
@@ -39,12 +44,12 @@ class VxRunning extends View {
     return picture.size(VxRunning.ICON_PX).flex_none();
   }
 
-  static closeAction(paneIds) {
-    return {
-      doing: "Closing",
-      done: "Closed",
-      steps: paneIds.map((pane) => ({ cmd: VxRunning.HERDR_APP, args: ["do", "pane.close", "--pane", pane] })),
-    };
+  static statusMark(status, colors) {
+    const color = VxRunning.statusColor(status, colors);
+    if (VxRunning.SPINNING.has(status)) {
+      return Icon("spinner", VxRunning.SPINNER_PX).text_color(color).spin(SPIN_MS);
+    }
+    return Dot(color);
   }
 
   static plural(count, word) {
@@ -72,6 +77,10 @@ class VxRunning extends View {
 
   init(given, cx) {
     const options = props() ?? given ?? {};
+    if (options.menu) {
+      this.menu = new RunningMenu(options.menu, cx);
+      return;
+    }
     if (options.confirm) {
       this.confirmSpec = options.confirm;
       this.confirmFocus = cx.focus_handle();
@@ -83,13 +92,18 @@ class VxRunning extends View {
     this.roots = {};
     this.prefs = { ...DEFAULT_PREFS };
     this.closeMenu = false;
+    this.probe = new RunningProbe();
     if (checking()) {
       return;
     }
+    this.probe.start(cx);
     this.reloadPrefs(cx);
     this.watchPrefs(cx);
     this.refreshRoots(cx);
-    cx.timer.every(VxRunning.ROOTS_REFRESH_MS, (cx) => this.refreshRoots(cx));
+    cx.timer.every(VxRunning.ROOTS_REFRESH_MS, (cx) => {
+      this.refreshRoots(cx);
+      this.probe.kick(cx);
+    });
   }
 
   reloadPrefs(cx) {
@@ -159,29 +173,8 @@ class VxRunning extends View {
     });
   }
 
-  focusRow(row) {
-    if (row.space) {
-      run("space.select", { id: row.space });
-    }
-    run("tab.select", { id: row.tab });
-    run("pane.focus", { pane: row.pane });
-  }
-
   closeRows(title, rows) {
-    if (rows.length === 0) {
-      return;
-    }
-    if (rows.length === 1 && !this.prefs.confirmKill) {
-      run("pane.close", { pane: rows[0].pane });
-      return;
-    }
-    askConfirm(VxRunning.MOD, {
-      title,
-      detail: rows.map((row) => `${row.label}${row.title ? `: ${row.title}` : ""}`).join(", "),
-      label: "Close",
-      danger: true,
-      action: VxRunning.closeAction(rows.map((row) => row.pane)),
-    });
+    RunningMenu.closeRows(title, rows, this.prefs.confirmKill);
   }
 
   closeMode(folders, mode, cx) {
@@ -192,8 +185,11 @@ class VxRunning extends View {
   }
 
   newTerminal(folder) {
-    const space = folder.rows.find((row) => row.space)?.space;
-    run("tab.new", space ? { folder: folder.path, space } : { folder: folder.path });
+    RunningMenu.newTab(folder.path, folder.rows.find((row) => row.space)?.space ?? null);
+  }
+
+  twoRows() {
+    return this.prefs.spacing !== "compact";
   }
 
   rowHeight() {
@@ -217,7 +213,9 @@ class VxRunning extends View {
       .child(textButton("grouping", this.prefs.grouping === "tree" ? "Tree" : "Folders", "Group by folder or as a tree",
         (_event, cx) => this.setPref({ grouping: VxRunning.next(GROUPINGS, this.prefs.grouping) }, cx)))
       .child(div().flex_1())
-      .child(IconButton({ id: "spacing", icon: "list", label: `Spacing: ${this.prefs.spacing}`,
+      .child(IconButton({ id: "cards", icon: "layout", label: "Folder card backgrounds", active: this.prefs.cardBackgrounds,
+        onClick: (cx) => this.setPref({ cardBackgrounds: !this.prefs.cardBackgrounds }, cx) }))
+      .child(IconButton({ id: "spacing", icon: "list", label: this.twoRows() ? "Two-row items (click for one row)" : "One-row items (click for two rows)",
         onClick: (cx) => this.setPref({ spacing: this.prefs.spacing === "compact" ? "comfortable" : "compact" }, cx) }))
       .child(IconButton({ id: "collapse", icon: "collapse", label: "Collapse or expand all", onClick: (cx) => this.collapseAll(folders, tree, cx) }))
       .child(IconButton({ id: "close-menu", icon: "trash", label: "Close panes…", active: this.closeMenu,
@@ -247,6 +245,10 @@ class VxRunning extends View {
 
   folderRow(folder, colors, depth) {
     const open = !this.isCollapsed(folder.path);
+    if (folder.isRepo) {
+      this.shownRepos.push({ path: folder.path, on: this.machineOf(folder.rows[0]?.tab) });
+    }
+    const gitLine = this.probe.lineOf(folder.path) ?? folder.branch;
     return h_flex().id(`f-${folder.path}`).h(this.rowHeight()).pl(6 + depth * VxRunning.INDENT_PX).pr(6).gap(6).items_center().cursor_pointer()
       .hover((style) => style.bg(colors.hover))
       .on_click((_event, cx) => {
@@ -255,44 +257,61 @@ class VxRunning extends View {
           return;
         }
         if (folder.rows[0]) {
-          this.focusRow(folder.rows[0]);
+          RunningMenu.focusRow(folder.rows[0]);
         }
+      })
+      .on_mouse_down("right", (_event, cx) => {
+        cx.stop_propagation();
+        RunningMenu.open(folder.name, folder.path, RunningMenu.folderItems(folder, this.prefs.confirmKill));
       })
       .child(this.chevron(open))
       .child(FileIcon(this.icons, folder.path, { dir: true, open, size: VxRunning.ICON_PX }))
-      .child(div().min_w(0).truncate().font_semibold().text_color(folder.focused ? colors.accent : colors.foreground).child(folder.name))
-      .when(Boolean(folder.branch), (el) => el.child(div().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(folder.branch)))
-      .child(div().flex_1())
-      .when(Boolean(folder.status), (el) => el.child(Dot(VxRunning.statusColor(folder.status, colors))))
+      .child(div().flex_none().font_semibold().text_color(folder.focused ? colors.accent : colors.foreground).child(folder.name))
+      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(gitLine ?? ""))
+      .when(Boolean(folder.status), (el) => el.child(VxRunning.statusMark(folder.status, colors)))
       .child(div().flex_none().text_size(TEXT.caption).text_color(colors.dim).child(VxRunning.counts(folder)))
       .child(IconButton({ id: `new-${folder.path}`, icon: "plus", label: "New terminal here", onClick: () => this.newTerminal(folder) }))
       .child(IconButton({ id: `kill-${folder.path}`, icon: "x", label: "Close everything here", onClick: () => this.closeRows(`Close everything in ${folder.name}?`, folder.rows) }));
   }
 
-  paneRow(row, colors, depth) {
+  // Row 2 of a card: the orch summary, else the title, else the tab.
+  static detailOf(row) {
+    return row.orchSummary ?? (row.title || (row.tabName ? `tab ${row.tabName}` : baseName(row.cwd)));
+  }
+
+  paneRow(row, folder, colors, depth) {
+    const twoRows = this.twoRows();
     const name = row.title || baseName(row.cwd);
-    return h_flex().id(`p-${row.pane}`).h(this.rowHeight()).pl(6 + (depth + 1) * VxRunning.INDENT_PX).pr(6).gap(6).items_center().cursor_pointer()
-      .when(row.focused, (el) => el.bg(colors.selected))
-      .hover((style) => style.bg(colors.hover))
-      .on_click(() => this.focusRow(row))
-      .on_mouse_down("right", (_event, cx) => {
-        cx.stop_propagation();
-        this.closeRows(`Close ${row.label}?`, [row]);
-      })
-      .child(Dot(VxRunning.statusColor(row.status, colors)))
+    const head = h_flex().h(twoRows ? VxRunning.LINE_HEIGHT : this.rowHeight()).gap(6).items_center()
+      .child(div().w(VxRunning.ICON_PX).flex_none().flex().justify_center().child(VxRunning.statusMark(row.status, colors)))
       .child(VxRunning.programIcon(row.program))
       .child(div().flex_none().text_color(row.focused ? colors.foreground : colors.muted).child(row.label))
-      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(name))
-      .child(div().flex_none().text_size(TEXT.caption).text_color(colors.dim).child(row.tabName))
+      .when(!twoRows, (el) => el.child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(name)))
+      .when(twoRows, (el) => el.child(div().flex_1()))
+      .child(div().flex_none().text_size(TEXT.caption).text_color(colors.dim).child(row.orchSummary ? "orch" : row.tabName))
       .child(IconButton({ id: `kill-${row.pane}`, icon: "x", label: "Close", onClick: () => this.closeRows(`Close ${row.label}?`, [row]) }));
+    const detailColor = row.orchSummary ? colors.ansi5 : colors.dim;
+    return v_flex().id(`p-${row.pane}`).pl(6 + (depth + 1) * VxRunning.INDENT_PX).pr(6).cursor_pointer()
+      .when(twoRows, (el) => el.py(VxRunning.CARD_PAD_PX))
+      .when(row.focused, (el) => el.bg(colors.selected))
+      .hover((style) => style.bg(colors.hover))
+      .on_click(() => RunningMenu.focusRow(row))
+      .on_mouse_down("right", (_event, cx) => {
+        cx.stop_propagation();
+        RunningMenu.open(row.label, row.title || folder.name, RunningMenu.paneItems(row, folder, this.prefs.confirmKill));
+      })
+      .child(head)
+      .when(twoRows, (el) => el.child(div().h(VxRunning.LINE_HEIGHT).pl(VxRunning.ICON_PX * 2 + 12).truncate()
+        .text_size(TEXT.caption).text_color(detailColor).child(VxRunning.detailOf(row))));
   }
 
   folderBlock(folder, colors, depth) {
-    const rows = [this.folderRow(folder, colors, depth)];
-    if (this.isCollapsed(folder.path)) {
+    const header = this.folderRow(folder, colors, depth);
+    const rows = this.isCollapsed(folder.path) ? [header] : [header, ...folder.rows.map((row) => this.paneRow(row, folder, colors, depth))];
+    if (!this.prefs.cardBackgrounds) {
       return rows;
     }
-    return [...rows, ...folder.rows.map((row) => this.paneRow(row, colors, depth))];
+    return [v_flex().id(`card-${folder.path}`).mx(4).my(2).rounded(6).overflow_hidden().bg(colors.surface).children(rows)];
   }
 
   dirRow(node, colors, depth) {
@@ -318,15 +337,20 @@ class VxRunning extends View {
   }
 
   render() {
+    if (this.menu) {
+      return this.menu.render();
+    }
     if (this.confirmSpec) {
       return ConfirmView(this);
     }
     const colors = theme();
-    const folders = sortFolders(groupRunning({ panes: panes(), spaces: spaces(), roots: this.roots }), this.prefs.sort);
+    const folders = sortFolders(groupRunning({ panes: panes(), spaces: spaces(), roots: this.roots, orchOf: this.probe.orchOf() }), this.prefs.sort);
+    this.shownRepos = [];
     const tree = this.prefs.grouping === "tree" ? buildTree(folders) : [];
     const rows = this.prefs.grouping === "tree"
       ? this.treeRows(tree, colors, 0)
       : folders.flatMap((folder) => this.folderBlock(folder, colors, 0));
+    this.probe.want(this.shownRepos);
     return v_flex().id(VxRunning.MOD).size_full().bg(colors.chrome).text_size(TEXT.small).text_color(colors.foreground)
       .child(this.toolbar(colors, folders, tree))
       .when(this.closeMenu, (el) => el.child(this.closeMenuRows(colors, folders)))

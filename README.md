@@ -36,12 +36,17 @@ Two layouts:
 | **vx-status** | bottom bar | Repo, branch, ↑↓ with fetch / pull / push, changes, conflicts, stashes; in vx-code also `✕ errors ⚠ warnings` (opens Problems), the listening-port count (opens Ports) and the repo's last pipeline. |
 | **vx-search** | side bar (vx-code) | Search across every repo of the workspace (`git grep`): Match Case, Whole Word, Regex, files to include; a match opens the file at its line. |
 | **vx-panel** | bottom panel (vx-code) | Problems (conflicts, failing pipelines, branches behind, and **Run checks**: the repo's typecheck / lint scripts as file:line rows), Terminal (shells that never become tabs), Ports (listening programs: open, or stop after asking). |
-| **vx-running** | side bar (vx-code) | Running: every terminal and agent grouped by its repo or folder, with status dots, branch and counts; click to focus, `+` for a new terminal, close asks first. |
-| **vx-activity** | activity bar (vx-code) | Explorer, Search, Source Control, CI, Running, Spaces, Agents with badges; Graph and Settings. Also the side bar's title. |
-| **vx-titlebar** | title bar (vx-code) | Workspace name, ← → through visited tabs, the command center and **Quick Open** like VS Code's: files of every repo with the matched letters highlighted (recently opened first, `name:42` opens at a line), `:` go to line, `@` go to symbol, `>` every Herdr and vx command with its key, `%` search text, `?` help; ⌘Enter opens to the side. Layout toggles. |
+| **vx-running** | side bar (vx-code) | Running: every terminal and agent grouped by its repo or folder, like herdr-folders: status (orch work shows as a magenta spinner), a git line per repo (`main ↑1 ?2 ±3`, `=` when clean), two-row or one-row items, card backgrounds; click to focus, right-click for Focus / New tab here / Show git changes / Close, close asks first. |
+| **vx-projects** | side bar (vx-code) | Projects, like herdr-project-manager and its `projects.json` (globs, excludes, pinned projects): fuzzy filter, Enter or click opens a space, right-click for Open in new tab, Open repository, Copy path, Remove; the gear edits `projects.json` in vx-files. |
+| **vx-updates** | side bar (vx-code), an extension | Auto-update for the app and herdr-core, like herdr-auto-update and its `config.json`: versions, what's ready, release notes, toggles, Check now / Update core / Restart to update; restarts only when no agent is working. |
+| **vx-activity** | activity bar (vx-code) | Explorer, Search, Source Control, CI, Running, Projects, Spaces, Agents with badges, then any [extension](docs/extensions.md) views; Graph and Settings. Also the side bar's title. |
+| **vx-titlebar** | title bar (vx-code) | `app <ver> · core <ver>` at the top right (`↑ <ver>` when an update waits; click for Updates). Workspace name, ← → through visited tabs, the command center and **Quick Open** like VS Code's: files of every repo with the matched letters highlighted (recently opened first, `name:42` opens at a line), `:` go to line, `@` go to symbol, `>` every Herdr and vx command with its key, `%` search text, `?` help; ⌘Enter opens to the side. Layout toggles. |
 | **vx-icons** | assets | [vscode-icons](https://github.com/vscode-icons/vscode-icons) icons (MIT, v13.0.0) and the UI icons. |
 
 Changes, CI and Graph each have a `repo ▾` switcher in their header.
+
+**Extensions.** Any mod can add its own activity-bar view with a `vx-extension.json` file. See
+[docs/extensions.md](docs/extensions.md) and `examples/hello-extension/`.
 
 ![Changes and a diff](docs/changes.png)
 

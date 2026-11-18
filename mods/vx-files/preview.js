@@ -84,11 +84,15 @@ function toolbarLink(t, id, label, onClick, primary) {
 export const previewMethods = {
   initPreview(initProps, cx) {
     this.viewSpace = initProps.space;
+    this.scroller = VirtualListScrollHandle.new();
+    if (initProps.untitled?.name) {
+      this.initUntitled(initProps.untitled, cx);
+      return;
+    }
     // A tab opened directly (herdr-app do tab.new --mod vx-files --props {...}) names its file.
     this.propsFile = initProps.file?.root && initProps.file?.rel ? initProps.file : null;
     // A kept tab (props.fixed) shows its own file and never follows the space's preview.
     this.fixed = Boolean(initProps.fixed && this.propsFile);
-    this.scroller = VirtualListScrollHandle.new();
     this.mdCode = false;
     this.blameOn = initProps.blame === true || localStorage.getItem(BLAME_KEY) === "1";
     if (Number.isInteger(initProps.line)) {
@@ -166,6 +170,10 @@ export const previewMethods = {
       this.jumpAt = value.at;
       this.jumpLine = value.line;
     }
+    if (value.edit && value.at && value.at !== this.editAt && !this.fixed) {
+      this.editAt = value.at;
+      this.editWanted = true;
+    }
     const key = `${value.on ?? ""}|${value.root}/${value.rel}`;
     if (key !== this.fileKey) {
       this.resetFile(value, key);
@@ -189,6 +197,7 @@ export const previewMethods = {
         }
         if (await this.readText(file, cx)) {
           await this.loadHunks(file);
+          this.applyEditWanted(cx);
         }
       } finally {
         this.readingPreview = false;
@@ -207,6 +216,17 @@ export const previewMethods = {
     const result = await exec("sh", ["-c", COPY, "vx-copy", abs, `${appHome()}/${copy}`]);
     this.problem = result.code === 0 ? null : "This file is no longer there.";
     this.imageCopy = result.code === 0 ? copy : null;
+  },
+
+  // showInViewer(..., { edit: true }) opens the file straight in Edit mode.
+  applyEditWanted(cx) {
+    if (!this.editWanted) {
+      return;
+    }
+    this.editWanted = false;
+    if (!this.editor) {
+      this.startEdit(cx);
+    }
   },
 
   applyJump() {
@@ -465,6 +485,9 @@ export const previewMethods = {
   },
 
   dirtyKey() {
+    if (this.untitled) {
+      return this.untitledDirtyKey();
+    }
     return this.file ? `${this.file.root}/${this.file.rel}` : null;
   },
 
@@ -538,6 +561,10 @@ export const previewMethods = {
     if (!this.editor || !file) {
       return;
     }
+    if (this.untitled) {
+      this.openSaveAs();
+      return;
+    }
     const text = this.editor.value();
     if (text === this.saved) {
       return;
@@ -579,7 +606,7 @@ export const previewMethods = {
     return el
       .when(unsaved, (row) => row
         .child(toolbarLink(t, "pv-revert", "Revert", (cx) => this.revert(cx), false))
-        .child(toolbarLink(t, "pv-save", "Save ⌘S", (cx) => this.save(cx), true)))
+        .child(toolbarLink(t, "pv-save", this.untitled ? "Save As ⌘S" : "Save ⌘S", (cx) => this.save(cx), true)))
       .child(IconButton({ id: "pv-edit", icon: "pencil", label: this.editor ? "Stop editing" : "Edit this file", active: Boolean(this.editor), onClick: (cx) => this.toggleEdit(cx), size: 22 }));
   },
 
@@ -587,6 +614,7 @@ export const previewMethods = {
     const abs = `${file.root}/${file.rel}`;
     const showsCode = !isMarkdown || this.mdCode;
     const editable = !file.on && !IMAGE.test(file.rel) && showsCode && this.text !== undefined;
+    const real = !file.untitled;
     return h_flex().h(30).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).text_size(TEXT.small)
       .child(FileIcon(this.icons, abs, { size: 14 }))
       .child(div().flex_none().max_w(320).truncate().font_medium().child(fileName(file.rel)))
@@ -594,9 +622,9 @@ export const previewMethods = {
       .when(isMarkdown, (el) => el
         .child(IconButton({ id: "pv-md", icon: "eye", label: "Rendered", active: !this.mdCode, onClick: (cx) => this.setMdCode(false, cx), size: 22 }))
         .child(IconButton({ id: "pv-code", icon: "file", label: "Code", active: this.mdCode, onClick: (cx) => this.setMdCode(true, cx), size: 22 })))
-      .when(showsCode, (el) => this.codeTools(t, el))
+      .when(showsCode && real, (el) => this.codeTools(t, el))
       .when(editable, (el) => this.editTools(t, el))
-      .when(!file.on, (el) => el.child(IconButton({ id: "pv-open", icon: "external", label: "Open in default app", onClick: () => exec("open", ["--", abs]).catch(() => {}), size: 22 })));
+      .when(!file.on && real, (el) => el.child(IconButton({ id: "pv-open", icon: "external", label: "Open in default app", onClick: () => exec("open", ["--", abs]).catch(() => {}), size: 22 })));
   },
 
   // The selected line's full blame, like GitLens' current-line annotation.

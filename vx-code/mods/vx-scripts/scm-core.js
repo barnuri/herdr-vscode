@@ -129,6 +129,20 @@ export function commitUrl(remote, sha) {
   return null;
 }
 
+// The web page of a repo: remote = parseRemote(url) with its host already resolved from an SSH
+// alias. Any host gets https://<host>/<path>; null when there is no remote.
+export function repoWebUrl(remote) {
+  if (!remote?.host || !remote.path) {
+    return null;
+  }
+  return `https://${remote.host}/${remote.path}`;
+}
+
+// The real host in `ssh -G <alias>` output (Host entries in ~/.ssh/config), or null.
+export function sshHostname(output) {
+  return /^hostname\s+(\S+)/m.exec(String(output ?? ""))?.[1] ?? null;
+}
+
 // A branch name git would accept (the common rules of `git check-ref-format --branch`).
 export function badBranchName(name) {
   const text = String(name ?? "");

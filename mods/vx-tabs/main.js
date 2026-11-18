@@ -3,12 +3,14 @@ import { h_flex, ScrollHandle } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, layout, settings, notify, checking, props, shared, setShared, nextCommand, home } from "herdr";
 import { ctx, contextKey, repoTop, baseName, workspace, rootFor, setActive } from "./ws.js";
 import { PM_ICON, findProject, pmOf, chosenOf, allScripts, runScript } from "./scripts.js";
-import { Icon, FileIcon, RootIcon, TEXT } from "./ui.js";
+import { Icon, FileIcon, RootIcon, TEXT, ConfirmView } from "./ui.js";
 import { showInViewer, keptTabs, viewerValue } from "./tabs.js";
 import { describeTab, tabIcon, repoColor } from "./kinds.js";
 import { popupMethods, postTabs } from "./popups.js";
 import { loadIcons } from "./icons.js";
 import { findNode } from "./layout-core.js";
+import { askConfirm, confirmMethods } from "./actions.js";
+import { isUntitledName, untitledDirtyKey, nextUntitledNumber, UNTITLED_PREFIX, UNTITLED_COUNTER_KEY } from "./untitled-core.js";
 
 class VxTabs extends View {
   static MOD = "vx-tabs";
@@ -40,12 +42,51 @@ class VxTabs extends View {
     return kind === "preview" || kind === "diff";
   }
 
+  static FILES_MOD = "vx-files";
+  static HERDR_APP = "herdr-app";
+
+  static untitledDirty(tab) {
+    return isUntitledName(tab.name) && Boolean(shared(VxTabs.KEY_DIRTY)?.[untitledDirtyKey(tab.name)]);
+  }
+
+  // Double-click on the empty tab bar: a new empty buffer in Edit mode, like VS Code.
+  static openUntitled(space) {
+    const allNames = spaces().flatMap((candidate) => candidate.tabs.map((tab) => tab.name));
+    const number = nextUntitledNumber(allNames, shared(UNTITLED_COUNTER_KEY) ?? 0);
+    setShared(UNTITLED_COUNTER_KEY, number);
+    const name = `${UNTITLED_PREFIX}${number}`;
+    const context = ctx();
+    const folder = context.root?.path ?? context.cwd ?? space?.folder ?? home();
+    run("tab.new", { space: space?.id, name, mod: VxTabs.FILES_MOD, props: { mode: "view", space: space?.id, untitled: { name, folder } } });
+  }
+
+  // An Untitled tab with text asks before its buffer is thrown away.
+  static closeTab(tab) {
+    if (!VxTabs.untitledDirty(tab)) {
+      run("tab.close", { id: tab.id });
+      return;
+    }
+    askConfirm(VxTabs.MOD, {
+      title: `Discard ${tab.name}?`,
+      detail: "It was never saved. Its text is lost when the tab closes.",
+      label: "Discard",
+      danger: true,
+      action: { doing: "Closing", done: "Closed", steps: [{ cmd: VxTabs.HERDR_APP, args: ["do", "tab.close", "--id", tab.id] }] },
+    });
+  }
+
   static activeSpace() {
     return spaces().find((s) => s.active);
   }
 
   init(given, cx) {
     const options = props() ?? given ?? {};
+    if (options.confirm) {
+      this.confirmSpec = options.confirm;
+      this.confirmFocus = cx.focus_handle();
+      this.confirmFocus.focus();
+      return;
+    }
     loadIcons(this, cx);
     if (options.menu) {
       this.menu = options.menu;
@@ -93,6 +134,9 @@ class VxTabs extends View {
         }
         if (command === "list") {
           this.openList();
+        }
+        if (command === "untitled") {
+          VxTabs.openUntitled(VxTabs.activeSpace());
         }
         cx.notify();
       }
@@ -398,7 +442,7 @@ class VxTabs extends View {
     if (showClose) {
       return div().id(`close-${tab.id}`).size(18).flex().items_center().justify_center().rounded(4).text_color(t.dim)
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: tab.id }); })
+        .on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); VxTabs.closeTab(tab); })
         .child(Icon("x", 12));
     }
     if (dirty) {
@@ -413,7 +457,7 @@ class VxTabs extends View {
     const italic = VxTabs.isFileKind(described.kind) && described.preview;
     const color = repoColor(described.repo, t);
     const file = VxTabs.tabFile(described);
-    const dirty = Boolean(file && shared(VxTabs.KEY_DIRTY)?.[file]);
+    const dirty = Boolean(file && shared(VxTabs.KEY_DIRTY)?.[file]) || VxTabs.untitledDirty(tab);
     const showClose = !pinned && (this.hovered === tab.id || (tab.active && !dirty));
     const status = VxTabs.statusMark(t, tab);
     const el = h_flex().id(`tab-${tab.id}`).flex_none().items_center().gap(6).text_size(12.8)
@@ -552,6 +596,9 @@ class VxTabs extends View {
   }
 
   render() {
+    if (this.confirmSpec) {
+      return ConfirmView(this);
+    }
     if (this.menu) {
       return this.renderMenu();
     }
@@ -586,7 +633,13 @@ class VxTabs extends View {
             cx.notify();
           }
         })
-        .children(shown.map((tab, index) => this.tabEl(t, tab, index, shown, active, space, stop))))
+        .children(shown.map((tab, index) => this.tabEl(t, tab, index, shown, active, space, stop)))
+        .when(vs, (el) => el.child(div().id("tab-empty").flex_1().min_w(24).h_full()
+          .on_click((event) => {
+            if (event.click_count === 2) {
+              VxTabs.openUntitled(space);
+            }
+          }))))
       .child(button("tab-new", Icon("plus", 14), () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 }), "New terminal or agent"))
       .when(vs, (el) => el.child(button("tab-split", Icon("split", 14), () => run("pane.split", { direction: "right" }), "Split Right")))
       .child(button("tab-list", Icon(vs ? "more" : "chevron-down", 14), () => this.openList(), `All tabs (${shown.length})`))
@@ -604,5 +657,5 @@ class VxTabs extends View {
   }
 }
 
-Object.assign(VxTabs.prototype, popupMethods);
+Object.assign(VxTabs.prototype, popupMethods, confirmMethods);
 export default VxTabs;

@@ -1,0 +1,8 @@
+{
+  "id": "hello",
+  "name": "Hello",
+  "title": "Hello extension",
+  "icon": "mods/hello-extension/icon.svg",
+  "view": { "mod": "hello-extension", "props": { "greeting": "Hello from an extension" } },
+  "badge": "hello.count"
+}
