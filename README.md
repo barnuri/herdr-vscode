@@ -25,7 +25,7 @@ Two layouts:
 | Mod | Where | What |
 |---|---|---|
 | **vx-workspace** | Explorer | The Explorer: every root of the workspace (Material root-folder icons, branch, status dot) with its file tree, git colours, ignored folders dimmed and a filter across all roots. Add / remove / rename / drag-reorder roots (written to the `.code-workspace` the way VS Code writes it); Open, Recent, New, Save As and Close workspace. |
-| **vx-changes** | Changes panel | Staged / unstaged / conflicts, stage and unstage, commit and amend, plus GitLens-style Commits (expand for files), Branches, Remotes, Stashes, Tags, and Search & Compare. |
+| **vx-changes** | Source Control | VS Code's Source Control: a commit box with Commit All, Commit & Push / Sync, Amend and a ✨ message written by Claude (`claude -p`); staged / unstaged / merge changes with stage, unstage and discard per file (hover or right-click) and **per hunk** in the diff tab; pull, push, publish, sync, fetch, stash and new branch. Plus GitLens-style Commits (graph lanes, authors, branch and tag pills, incoming / outgoing), Branches (switch, delete), Remotes (check out), Stashes (apply, pop, drop), Tags, and Search & Compare. |
 | **vx-ci** | CI panel (⌘⌥C) | GitLab pipelines (via `glab`) and GitHub Actions runs (via `gh`): runs, jobs by stage, retry, cancel, run a pipeline or dispatch a workflow, download artifacts. |
 | **vx-graph** | centre tab | Commit Graph: branch lanes, branch and tag labels, commit details and their diffs. |
 | **vx-files** | centre tab | File preview: syntax colours, Markdown, images, GitLens blame with an age heatmap, file and line history, and **Edit** (Herdr's code editor, ⌘S saves). Also the Timeline side-bar section. |
@@ -119,7 +119,7 @@ switch to another layout, then delete `layouts/vx-code.json` and `.svg`, the `mo
 
 ## Needs
 
-- **git**. **glab** (logged in) for GitLab CI, **gh** (logged in) for GitHub CI. SSH host aliases in
+- **git**. Claude Code's `claude` command for the ✨ commit message (optional). **glab** (logged in) for GitLab CI, **gh** (logged in) for GitHub CI. SSH host aliases in
   `~/.ssh/config` (e.g. `Host work-github`) are resolved to their real host.
 - Run checks uses your repo's own `typecheck` / `lint` scripts (and its package manager); Ports uses
   `lsof` (built into macOS).
@@ -129,9 +129,13 @@ switch to another layout, then delete `layouts/vx-code.json` and `.svg`, the `mo
 
 Reads use `git --no-optional-locks -c core.fsmonitor=false`, so nothing writes under `.git` behind
 your back. Programs get argument lists, never shell strings built from file names or API data.
-Anything that changes a repo or CI asks first: push, pull, fetch, retry, cancel, run pipeline,
-dispatch, switch branch, apply stash. Stage and unstage touch only the index; commit is a button.
-Nothing here deletes files or discards changes.
+Anything that changes a repo or CI asks first and shows the commands it will run: push, pull,
+sync, publish, fetch, retry, cancel, run pipeline, dispatch, switch or delete branch (`branch -d`,
+which refuses unmerged work), apply / pop / drop stash, and **discard**. Discard puts edited files
+back to their last staged or committed copy and moves new files to the macOS Trash (staged changes
+stay). Stage and unstage (also per hunk) touch only the index; commit is a button; new branch and
+stash are dialogs you fill in. The ✨ commit message sends your diff and recent commit subjects to
+Claude (`claude -p`), only when you click it.
 
 What vx-code adds: **Edit** writes the file you're editing only when you press Save (⌘S), and
 refuses if the file changed on disk since you opened it. **Run checks** runs the repo's own
