@@ -52,6 +52,8 @@ Every user-facing setting, preference or toggle is stored with `shared/settings.
 | `panel.view` | `"terminal"` | Bottom panel tab: `"problems"`, `"terminal"` or `"ports"` |
 | `panel.visible` | `true` | Bottom panel shown (⌘J / ⌃` toggle it) |
 | `panel.height` | `260` | Bottom panel height in px (drag its top edge) |
+| `terminal.inPanel` | `true` | Terminals live in the bottom panel: terminal tabs are hidden from the editor tab bar, and the panel lists and shows every terminal (`false`: only the panel's own shells, terminal tabs in the tab bar) |
+| `terminal.scope` | `"space"` | Terminals the panel lists: the active space's (`"space"`) or every space's (`"all"`) |
 | `terminal.tabs.location` | `"left"` | Side of the panel's terminal list (shown with 2+ terminals): `"left"` or `"right"` |
 | `terminal.tabs.width` | `170` | Width of that list in px (drag its edge; narrow shows icons only) |
 | `pending.auditScript` | `""` (bundled script) | Pending Repos audit script; falls back to its mod.json `settings` |

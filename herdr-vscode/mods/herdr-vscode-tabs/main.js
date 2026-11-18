@@ -1,18 +1,19 @@
 import { View, div, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, layout, settings, checking, props, shared, setShared, nextCommand, home } from "herdr";
+import { spaces, panes, focused, run, openOverlay, theme, window, layout, settings, checking, props, shared, setShared, nextCommand, home } from "herdr";
 import { ctx, contextKey, repoTop, baseName, workspace, rootFor, setActive } from "./ws.js";
 import { PM_ICON, findProject, pmOf, chosenOf, allScripts, runScript } from "./scripts.js";
 import { Icon, FileIcon, RootIcon, TEXT, ConfirmView } from "./ui.js";
 import { showInViewer, keptTabs, viewerValue } from "./tabs.js";
 import { describeTab, tabIcon, repoColor } from "./kinds.js";
-import { popupMethods, postTabs } from "./popups.js";
+import { popupMethods, postTabs, visibleTabs } from "./popups.js";
 import { loadIcons } from "./icons.js";
 import { findNode } from "./layout-core.js";
 import { logInfo, toast } from "./log.js";
 import { askConfirm, confirmMethods } from "./actions.js";
 import { isUntitledName, untitledDirtyKey, nextUntitledNumber, UNTITLED_PREFIX, UNTITLED_COUNTER_KEY, isEmptyEditorTab, closeDetail } from "./untitled-core.js";
-import { whenSettings } from "./settings.js";
+import { whenSettings, terminalsInPanel } from "./settings.js";
+import { editorTabs } from "./terminal-core.js";
 
 class HerdrVscodeTabs extends View {
   static MOD = "herdr-vscode-tabs";
@@ -94,7 +95,7 @@ class HerdrVscodeTabs extends View {
       return;
     }
     for (const space of spaces()) {
-      const tabs = space.tabs ?? [];
+      const tabs = terminalsInPanel() ? editorTabs(space, panes()) : space.tabs ?? [];
       const empties = tabs.filter((tab) => HerdrVscodeTabs.isEmptyTab(tab));
       if (empties.length > 0 && empties.length < tabs.length) {
         empties.forEach((tab) => {
@@ -187,7 +188,9 @@ class HerdrVscodeTabs extends View {
         if (command === "untitled") {
           HerdrVscodeTabs.openUntitled(HerdrVscodeTabs.activeSpace());
         }
-        if (command === "close") {
+        // A terminal in the bottom panel has the keyboard: ⌘W closes no editor tab.
+        const inPanelTerminal = Boolean(focused()?.terminal) && !focused()?.pane;
+        if (command === "close" && !inPanelTerminal) {
           const tab = HerdrVscodeTabs.activeSpace()?.tabs?.find((candidate) => candidate.active);
           if (tab) {
             HerdrVscodeTabs.closeTab(tab, "command close");
@@ -666,7 +669,7 @@ class HerdrVscodeTabs extends View {
     }
     const t = theme();
     const space = HerdrVscodeTabs.activeSpace();
-    const shown = (space?.tabs ?? []).filter((x) => !x.settled && !HerdrVscodeTabs.isEmptyTab(x));
+    const shown = visibleTabs(space).filter((x) => !HerdrVscodeTabs.isEmptyTab(x));
     const active = shown.findIndex((x) => x.active);
     this.followSelection(shown, active);
     const stop = (_e, cx) => cx.stop_propagation();

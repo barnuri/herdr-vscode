@@ -1,16 +1,17 @@
-import { View, div } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
-import { theme, layout, run, hc, exec, terminals, shared, setShared, nextCommand, checking, props, home, openOverlay, closeOverlay } from "herdr";
+import { theme, layout, run, hc, exec, terminals, spaces, panes, shared, setShared, nextCommand, checking, props, home, openOverlay, closeOverlay } from "herdr";
 import { ctx, baseName, workspace, rootFor, setActive, repoTop } from "./ws.js";
 import { findProject, pmOf } from "./scripts.js";
-import { showInViewer } from "./tabs.js";
+import { showInViewer, viewerValue } from "./tabs.js";
 import { withContent, findNode, withChildAt } from "./layout-core.js";
 import { parsePorts, workspaceProblems, pickChecks, parseCheckOutput, countProblems } from "./panel-core.js";
+import { panelTerminals, pickShown, isTerminalTab, fallbackTab, leadTerminal } from "./terminal-core.js";
 import { askConfirm, confirmMethods } from "./actions.js";
 import { TEXT, Icon, ConfirmView, FileIcon, RootIcon } from "./ui.js";
 import { loadIcons } from "./icons.js";
 import { toast } from "./log.js";
-import { loadSettings, settingsLoaded, getSetting, setSetting } from "./settings.js";
+import { loadSettings, settingsLoaded, getSetting, setSetting, terminalsInPanel } from "./settings.js";
 
 export default class HerdrVscodePanel extends View {
   static MOD = "herdr-vscode-panel";
@@ -19,6 +20,11 @@ export default class HerdrVscodePanel extends View {
   static PORTS_KEY = "herdr-vscode.ports";
   static TERMINAL_LABEL_KEY = "herdr-vscode.panel";
   static TERMINAL_LABEL = "herdr-vscode.panel=1";
+  static SPACE_LABEL_KEY = "herdr-vscode.space";
+  static EMPTY_EDITOR_MOD = "herdr-vscode-empty";
+  static MRU_KEY = "herdr-vscode.tabs.mru";
+  static REDIRECT_MS = 200;
+  static VIEWER_MODS = ["herdr-vscode-files", "herdr-vscode-changes"];
   static SIZE = 260;
   static MAXIMIZED_THRESHOLD = 40;
   static MAXIMIZED_SIZE = 2000;
@@ -60,8 +66,40 @@ export default class HerdrVscodePanel extends View {
   }
 
   static liveTerminals() {
-    const panelTerminals = (terminals() ?? []).filter((terminal) => terminal.labels?.[HerdrVscodePanel.TERMINAL_LABEL_KEY] === "1" && terminal.state === "live");
-    return new Map(panelTerminals.map((terminal) => [terminal.address, terminal]));
+    const own = (terminals() ?? []).filter((terminal) => terminal.labels?.[HerdrVscodePanel.TERMINAL_LABEL_KEY] === "1" && terminal.state === "live");
+    return new Map(own.map((terminal) => [terminal.address, terminal]));
+  }
+
+  static inPanel() {
+    return terminalsInPanel();
+  }
+
+  static activeSpace() {
+    return (spaces() ?? []).find((space) => space.active) ?? null;
+  }
+
+  // The terminals the list shows: with terminal.inPanel, every terminal tab's terminals of the
+  // space (terminal.scope "all": of every space) and the panel's own shells; without it, the
+  // panel's own shells in the context repo (every one when none is there).
+  static entries(state = HerdrVscodePanel.state()) {
+    const live = HerdrVscodePanel.liveTerminals();
+    const inPanel = HerdrVscodePanel.inPanel();
+    const all = panelTerminals({
+      spaces: spaces() ?? [],
+      panes: panes() ?? [],
+      owned: [...live.values()],
+      order: state.list,
+      scope: !inPanel || getSetting("terminal", "scope", "space") === "all" ? "all" : "space",
+      spaceId: HerdrVscodePanel.activeSpace()?.id ?? null,
+      inPanel,
+      spaceLabel: HerdrVscodePanel.SPACE_LABEL_KEY,
+    });
+    if (inPanel) {
+      return all;
+    }
+    const root = ctx().root?.path ?? null;
+    const inRoot = root ? all.filter((entry) => entry.cwd === root || (entry.cwd ?? "").startsWith(`${root}/`)) : [];
+    return inRoot.length ? inRoot : all;
   }
 
   static problems() {
@@ -77,7 +115,8 @@ export default class HerdrVscodePanel extends View {
   }
 
   static isMaximized(bottom) {
-    return (bottom?.size?.px ?? HerdrVscodePanel.SIZE) > HerdrVscodePanel.SIZE + HerdrVscodePanel.MAXIMIZED_THRESHOLD;
+    const normal = Math.max(HerdrVscodePanel.SIZE, Number(getSetting("panel", "height", 0)) || 0);
+    return (bottom?.size?.px ?? normal) > normal + HerdrVscodePanel.MAXIMIZED_THRESHOLD;
   }
 
   static plural(count, word) {
@@ -129,6 +168,10 @@ export default class HerdrVscodePanel extends View {
     this.tops = new Map();
     loadSettings();
     cx.timer.every(HerdrVscodePanel.TIDY_MS, (cx) => this.tidy(cx));
+    cx.timer.every(HerdrVscodePanel.REDIRECT_MS, () => {
+      this.redirect();
+      this.restoreForEditor();
+    });
     cx.timer.every(HerdrVscodePanel.PORT_COUNT_MS, (cx) => this.countPorts(cx));
     this.countPorts(cx);
     cx.spawn(async (cx) => {
@@ -237,8 +280,10 @@ export default class HerdrVscodePanel extends View {
         list.push(address);
       }
     }
-    const shown = live.has(state.shown) ? state.shown : list[list.length - 1] ?? null;
-    const split = live.has(state.split) ? state.split : null;
+    const entries = HerdrVscodePanel.entries({ ...state, list });
+    const listed = (address) => entries.some((entry) => entry.address === address);
+    const shown = pickShown(state.shown, entries);
+    const split = listed(state.split) ? state.split : null;
     const next = { ...state, shown, list, split };
     const onTerminal = state.view === HerdrVscodePanel.TERMINAL;
     // The activity bar and status bar switch the panel tab too: remember the user's last pick.
@@ -249,17 +294,68 @@ export default class HerdrVscodePanel extends View {
     this.arrangeList(state);
     if (list.join() !== state.list.join() || shown !== state.shown || split !== (state.split ?? null)) {
       setShared(HerdrVscodePanel.STATE_KEY, next);
-      if (state.list.length && !list.length && visible && onTerminal) {
+      if (state.shown && !shown && visible && onTerminal) {
         run("layout.hide", { id: "bottom" });
       }
     }
     this.apply(next);
-    const shouldStart = (appeared || this.autostart) && visible && onTerminal && !list.length;
+    const shouldStart = (appeared || this.autostart) && visible && onTerminal && !entries.length;
     this.autostart = false;
     if (shouldStart && !this.starting) {
       this.autoAdd(cx);
     }
     cx.notify();
+  }
+
+  // With terminal.inPanel, a terminal tab never shows in the editor: when one gets selected
+  // (Running, a new terminal or agent, a tab key), its terminal shows in the panel and the
+  // editor goes back to its last editor tab, or the empty editor.
+  redirect() {
+    if (!settingsLoaded() || !HerdrVscodePanel.inPanel() || !this.bottom()) {
+      return;
+    }
+    const space = HerdrVscodePanel.activeSpace();
+    const tab = space?.tabs?.find((candidate) => candidate.active);
+    const allPanes = panes() ?? [];
+    if (!tab || !isTerminalTab(tab.id, allPanes)) {
+      return;
+    }
+    const address = leadTerminal(tab.id, allPanes);
+    const back = fallbackTab(space, allPanes, (shared(HerdrVscodePanel.MRU_KEY) ?? {})[space.id] ?? []);
+    if (back) {
+      run("tab.select", { id: back });
+    } else {
+      run("tab.new", { space: space.id, name: "Welcome", mod: HerdrVscodePanel.EMPTY_EDITOR_MOD });
+    }
+    this.commit({ ...HerdrVscodePanel.state(), view: HerdrVscodePanel.TERMINAL, shown: address, split: null });
+    run("layout.show", { id: "bottom" });
+    run("pane.focus", { terminal: address });
+    this.editorSeen = null;
+  }
+
+  // What the editor shows: its tab and the last file or diff opened in its viewers.
+  static editorSignature() {
+    const space = HerdrVscodePanel.activeSpace();
+    const tab = space?.tabs?.find((candidate) => candidate.active)?.id ?? "";
+    const opened = HerdrVscodePanel.VIEWER_MODS.map((mod) => viewerValue(mod, space?.id)?.at ?? 0);
+    return [space?.id ?? "", tab, ...opened].join("|");
+  }
+
+  // Opening a file or any editor view while the panel is maximized restores the panel, as
+  // VS Code does: every opener (Explorer, Quick Open, diffs, search, links, hv) changes the
+  // editor's tab or viewer, so this one watch covers them all.
+  restoreForEditor() {
+    const signature = HerdrVscodePanel.editorSignature();
+    const changed = this.editorSeen !== undefined && this.editorSeen !== null && signature !== this.editorSeen;
+    this.editorSeen = signature;
+    const bottom = this.bottom();
+    if (changed && bottom && !bottom.hidden && HerdrVscodePanel.isMaximized(bottom)) {
+      this.restoreSize();
+    }
+  }
+
+  restoreSize() {
+    run("layout.resize", { id: "bottom", px: Number(getSetting("panel", "height", 0)) || HerdrVscodePanel.SIZE });
   }
 
   // settings.json panel.visible and panel.height: restored once at start, then kept up to date.
@@ -301,7 +397,7 @@ export default class HerdrVscodePanel extends View {
     if (moved) {
       run("layout.set", { layout: moved });
     }
-    const many = state.view === HerdrVscodePanel.TERMINAL && HerdrVscodePanel.listedShells(state, HerdrVscodePanel.liveTerminals()).length > 1;
+    const many = state.view === HerdrVscodePanel.TERMINAL && HerdrVscodePanel.entries(state).length > 1;
     if (Boolean(node.hidden) === many) {
       run(many ? "layout.show" : "layout.hide", { id: HerdrVscodePanel.LIST_BLOCK });
     }
@@ -333,6 +429,10 @@ export default class HerdrVscodePanel extends View {
     const context = ctx();
     const cwd = context.root?.path ?? context.cwd ?? home();
     const args = ["run", "--bg", "--json", "--keep", "--no-parent", "--outlive-parent", "--no-notify", "--label", HerdrVscodePanel.TERMINAL_LABEL, "--cwd", cwd];
+    const space = HerdrVscodePanel.activeSpace()?.id;
+    if (space) {
+      args.push("--label", `${HerdrVscodePanel.SPACE_LABEL_KEY}=${space}`);
+    }
     if (context.on) {
       args.push("--on", context.on);
     }
@@ -370,6 +470,7 @@ export default class HerdrVscodePanel extends View {
 
   show(address) {
     this.commit({ ...HerdrVscodePanel.state(), view: HerdrVscodePanel.TERMINAL, shown: address });
+    run("layout.show", { id: "bottom" });
     run("pane.focus", { terminal: address });
   }
 
@@ -378,10 +479,12 @@ export default class HerdrVscodePanel extends View {
     if (!address) {
       return;
     }
+    HerdrVscodePanel.keepSpaceOf(address);
     run("terminal.kill", { terminal: address });
     const list = state.list.filter((other) => other !== address);
     const split = state.split === address ? null : state.split ?? null;
-    const shown = state.shown === address ? split ?? list[list.length - 1] ?? null : state.shown;
+    const rest = HerdrVscodePanel.entries(state).filter((entry) => entry.address !== address);
+    const shown = state.shown === address ? split ?? rest[rest.length - 1]?.address ?? null : state.shown;
     const next = { ...state, shown, list, split: split === shown ? null : split };
     this.commit(next);
     if (!next.shown) {
@@ -389,9 +492,24 @@ export default class HerdrVscodePanel extends View {
     }
   }
 
+  // Killing the last terminal tab of a space would close the space: the empty editor stays.
+  static keepSpaceOf(address) {
+    const allPanes = panes() ?? [];
+    const tabId = allPanes.find((pane) => pane.terminal === address)?.tab;
+    const space = (spaces() ?? []).find((candidate) => (candidate.tabs ?? []).some((tab) => tab.id === tabId));
+    const others = (space?.tabs ?? []).filter((tab) => tab.id !== tabId);
+    const alone = allPanes.filter((pane) => pane.tab === tabId).length === 1;
+    if (space && alone && !others.length) {
+      run("tab.new", { space: space.id, name: "Welcome", mod: HerdrVscodePanel.EMPTY_EDITOR_MOD, focus: false });
+    }
+  }
+
   maximize() {
-    const px = HerdrVscodePanel.isMaximized(this.bottom()) ? HerdrVscodePanel.SIZE : HerdrVscodePanel.MAXIMIZED_SIZE;
-    run("layout.resize", { id: "bottom", px });
+    if (HerdrVscodePanel.isMaximized(this.bottom())) {
+      this.restoreSize();
+      return;
+    }
+    run("layout.resize", { id: "bottom", px: HerdrVscodePanel.MAXIMIZED_SIZE });
   }
 
   runChecks(cx) {
@@ -644,28 +762,34 @@ export default class HerdrVscodePanel extends View {
     return body.child(v_flex().id("vp-problem-rows").flex_1().min_h(0).overflow_y_scrollbar().py(4).children(rows));
   }
 
-  // VS Code's terminal tabs list, right of the terminal: the panel's shells for the active folder
-  // (every shell when none is there), with kill on hover.
-  static listedShells(state, live) {
-    const root = ctx().root?.path ?? null;
-    const shells = state.list.filter((address) => live.has(address));
-    const inRoot = root ? shells.filter((address) => {
-      const cwd = live.get(address)?.cwd ?? "";
-      return cwd === root || cwd.startsWith(`${root}/`);
-    }) : [];
-    return inRoot.length ? inRoot : shells;
+  // A terminal's name in the list and header: the one given with Rename, else its session title
+  // (the program icon names the harness, as in the Running view), else the program and folder.
+  static entryName(entry) {
+    const custom = (shared(HerdrVscodePanel.NAMES_KEY) ?? {})[entry?.address];
+    if (custom || entry?.title) {
+      return custom ?? entry.title;
+    }
+    const where = entry?.cwd ? (entry.cwd === home() ? "~" : baseName(entry.cwd)) : "";
+    return `${entry?.label ?? "zsh"}${where ? ` · ${where}` : ""}`;
   }
 
-  listRow(t, address, state, live) {
-    const terminal = live.get(address);
+  static programIcon(program, size) {
+    if (!program?.icon) {
+      return Icon("terminal", size);
+    }
+    return (program.tint ? svg(program.icon) : image(program.icon)).size(size).flex_none();
+  }
+
+  // VS Code's terminal tabs list, beside the terminal, with kill on hover.
+  listRow(t, entry, state) {
+    const { address } = entry;
     const selected = address === state.shown || address === state.split;
-    const where = terminal?.cwd ? (terminal.cwd === home() ? "~" : baseName(terminal.cwd)) : "";
     const hot = this.hotShell === address;
-    const name = (shared(HerdrVscodePanel.NAMES_KEY) ?? {})[address] ?? terminal?.agent ?? "zsh";
+    const name = HerdrVscodePanel.entryName(entry);
     const iconOnly = (this.listWidth ?? HerdrVscodePanel.LIST_WIDTH) < HerdrVscodePanel.LIST_ICON_ONLY_PX;
     return h_flex().id(`vp-l-${address}`).h(HerdrVscodePanel.LIST_ROW_PX).flex_none().pl(8).pr(4).gap(6).items_center().cursor_pointer()
       .bg(selected ? t.selected : hot ? t.hover : HerdrVscodePanel.TRANSPARENT).text_color(selected ? t.foreground : t.muted)
-      .tooltip(terminal?.cwd ?? address)
+      .tooltip(entry.cwd ?? address)
       .on_hover((on, cx) => {
         this.hotShell = on ? address : this.hotShell === address ? null : this.hotShell;
         cx.notify();
@@ -680,14 +804,13 @@ export default class HerdrVscodePanel extends View {
         openOverlay({ mod: HerdrVscodePanel.MOD, kind: "popup", width: HerdrVscodePanel.MENU_WIDTH, height, props: { shellMenu: { address, name } } });
       })
       .when(iconOnly, (el) => el.justify_center().pl(0).pr(0))
-      .child(Icon(address === state.split ? "split" : "terminal", 14))
-      .when(!iconOnly, (el) => el.child(div().flex_1().min_w(0).truncate().child(`${name}${where ? ` · ${where}` : ""}`)))
+      .child(address === state.split ? Icon("split", 14) : HerdrVscodePanel.programIcon(entry.program, 14))
+      .when(!iconOnly, (el) => el.child(div().flex_1().min_w(0).truncate().child(name)))
       .when(hot && !iconOnly, (el) => el.child(this.headerButton(t, `kill-${address}`, "trash", "Kill Terminal", () => this.kill(address))));
   }
 
   renderList(t) {
     const state = HerdrVscodePanel.state();
-    const live = HerdrVscodePanel.liveTerminals();
     const left = getSetting("terminal", "tabs.location", "left") !== "right";
     return v_flex().id("herdr-vscode-panel-list").size_full().py(2).when(left, (el) => el.border_r(1)).when(!left, (el) => el.border_l(1))
       .border_color(t.border).bg(t.background).text_size(TEXT.small).overflow_y_scrollbar()
@@ -697,7 +820,7 @@ export default class HerdrVscodePanel extends View {
           cx.notify();
         }
       })
-      .children(HerdrVscodePanel.listedShells(state, live).map((address) => this.listRow(t, address, state, live)));
+      .children(HerdrVscodePanel.entries(state).map((entry) => this.listRow(t, entry, state)));
   }
 
   // Right-click on a terminal in the list: Rename, Split, Kill. Names are runtime (shells are).
@@ -776,13 +899,11 @@ export default class HerdrVscodePanel extends View {
         .bg(t.raised).text_size(TEXT.tiny).text_color(t.foreground).child(String(counts[id]))));
   }
 
-  terminalControls(t, el, state, live) {
-    const current = live.get(state.shown);
-    const shells = state.list.filter((address) => live.has(address));
-    const where = current?.cwd ? (current.cwd === home() ? "~" : baseName(current.cwd)) : "";
+  terminalControls(t, el, state) {
+    const current = HerdrVscodePanel.entries(state).find((entry) => entry.address === state.shown);
     return el
       .when(Boolean(current), (row) => row.child(h_flex().h(20).px(6).gap(5).flex_none().items_center().text_color(t.muted).tooltip(current?.cwd ?? "")
-        .child(Icon("terminal", 12)).child(div().max_w(220).truncate().child(`${(shared(HerdrVscodePanel.NAMES_KEY) ?? {})[state.shown] ?? current?.agent ?? "zsh"}${where ? ` - ${where}` : ""}`))))
+        .child(HerdrVscodePanel.programIcon(current?.program, 12)).child(div().max_w(220).truncate().child(HerdrVscodePanel.entryName(current)))))
       .child(this.headerButton(t, "new", "plus", "New Terminal in the context repo", (cx) => cx.spawn(async (cx) => {
         await this.add(cx);
         cx.notify();
@@ -815,14 +936,13 @@ export default class HerdrVscodePanel extends View {
       return this.renderEmpty(t);
     }
     const state = HerdrVscodePanel.state();
-    const live = HerdrVscodePanel.liveTerminals();
     const big = HerdrVscodePanel.isMaximized(this.bottom());
     const problemCounts = countProblems(HerdrVscodePanel.problems(), HerdrVscodePanel.checks());
     const counts = { problems: problemCounts.errors + problemCounts.warnings, ports: shared(HerdrVscodePanel.PORTS_KEY) || null };
     return h_flex().id("herdr-vscode-panel").size_full().pl(4).pr(8).gap(2).items_center().bg(t.background).text_size(TEXT.small)
       .children(HerdrVscodePanel.VIEWS.map((view) => this.viewTab(t, view, state, counts)))
       .child(div().flex_1())
-      .when(state.view === HerdrVscodePanel.TERMINAL, (el) => this.terminalControls(t, el, state, live))
+      .when(state.view === HerdrVscodePanel.TERMINAL, (el) => this.terminalControls(t, el, state))
       .child(this.headerButton(t, "max", big ? "chevron-down" : "maximize", big ? "Restore Panel Size" : "Maximize Panel Size", () => this.maximize()))
       .child(this.headerButton(t, "hide", "x", "Hide Panel (⌘J)", () => run("layout.hide", { id: "bottom" })));
   }

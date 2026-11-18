@@ -1,10 +1,11 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
-import { theme, props, closeOverlay, spaces, run, shared, setShared } from "herdr";
+import { theme, props, closeOverlay, spaces, panes, run, shared, setShared } from "herdr";
 import { describeTab, tabIcon, repoColor } from "./kinds.js";
 import { TEXT, Icon } from "./ui.js";
 import { AUTOSAVE_DEFAULT, AUTOSAVE_OFF, AUTOSAVE_AFTER_DELAY, autoSaveMode } from "./fileops-core.js";
-import { getSetting, setSetting } from "./settings.js";
+import { getSetting, setSetting, terminalsInPanel } from "./settings.js";
+import { isTerminalTab } from "./terminal-core.js";
 
 const ROW = 32;
 const MAX_VISIBLE_ROWS = 12;
@@ -20,7 +21,12 @@ const NEEDS_YOU = ["blocked", "done"];
 // Popups close as soon as you choose, so follow-up work is posted to the bar.
 export const postTabs = (cmd) => setShared(CMD_KEY, { ...cmd, id: `${Date.now()}-${Math.random().toString(ID_RADIX).slice(...ID_SUFFIX)}` });
 
-const visibleTabs = (space) => (space?.tabs ?? []).filter((tab) => !tab.settled);
+// With terminal.inPanel, terminal tabs live in the bottom panel, not among the editor tabs.
+export const visibleTabs = (space) => {
+  const hideTerminals = terminalsInPanel();
+  const allPanes = hideTerminals ? panes() : [];
+  return (space?.tabs ?? []).filter((tab) => !tab.settled && !(hideTerminals && isTerminalTab(tab.id, allPanes)));
+};
 const isItalic = (described) => (described.kind === "preview" || described.kind === "diff" ? described.preview : false);
 
 export const popupMethods = {

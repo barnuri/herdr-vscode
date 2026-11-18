@@ -152,7 +152,7 @@ toggles CI.
 ## Settings
 
 Your choices (activity bar order and hidden icons, Source Control view and diff layout, auto save,
-blame, editor font/size/line height/tab size/word wrap, hidden files, tree indent and indent guides, search options, Git History branches, CI filters, panel tab, Pending Repos)
+blame, editor font/size/line height/tab size/word wrap, hidden files, tree indent and indent guides, search options, Git History branches, CI filters, panel tab, terminals in the panel (`terminal.inPanel`, `terminal.scope`), Pending Repos)
 are saved in `~/.config/herdr-vscode/settings.json`, one section per feature. You can edit the file
 by hand; the list of keys and defaults is in [CLAUDE.md](CLAUDE.md).
 

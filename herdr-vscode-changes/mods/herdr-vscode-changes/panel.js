@@ -125,6 +125,10 @@ function buildTree(files) {
 }
 
 // Folds a chain of single-child folders into one label.
+function filesUnder(node) {
+  return [...node.files, ...[...node.dirs.values()].flatMap(filesUnder)];
+}
+
 function foldSingleChildren(name, node) {
   let label = name;
   let current = node;
@@ -787,13 +791,31 @@ export const panelMethods = {
     return this.hoverable(withTreeIndent(row, colors, { depth: depth + 1, height: ROW_HEIGHT, firstLevel: 1, hovered: this.treeHovered }), key);
   },
 
-  folderRow(colors, id, label, depth, open) {
-    const row = h_flex().id(`d-${id}`).h(ROW_HEIGHT).flex_none().gap(2).items_center().cursor_pointer().hover((style) => style.bg(colors.hover))
+  // Like VS Code, a folder's hover actions act on every changed file under it.
+  folderRowActions(files, scope, id) {
+    const isStaged = scope === STAGED;
+    const ready = files.filter((file) => !file.conflict);
+    const button = (key, icon, label, onClick) => IconButton({ id: `${key}-${id}`, icon, label, size: 20, disabled: this.busy || !ready.length, onClick });
+    const actions = [];
+    if (!isStaged) {
+      actions.push(button("dd", "discard", "Discard Changes…", () => this.askDiscard(ready)));
+    }
+    actions.push(button("ds", isStaged ? "minus" : "plus", isStaged ? "Unstage" : "Stage", (cx) => this.index(isStaged ? UNSTAGE : STAGE, ready, cx)));
+    return actions;
+  },
+
+  folderRow(colors, id, label, depth, open, files, scope) {
+    const key = `dir:${id}`;
+    const row = h_flex().id(`d-${id}`).h(ROW_HEIGHT).flex_none().pr(12).gap(2).items_center().cursor_pointer()
+      .bg(this.hot === key ? colors.hover : TRANSPARENT)
       .text_size(TEXT.body).text_color(colors.foreground).on_click((_e, cx) => this.toggleGroup(id, cx))
       .child(twistieSlot(Icon(open ? "chevron-down" : "chevron-right", 14).text_color(colors.dim)))
       .child(FileIcon(this.icons, label.split("/").pop(), { dir: true, open, size: 16 }))
-      .child(div().truncate().child(label));
-    return withTreeIndent(row, colors, { depth: depth + 1, height: ROW_HEIGHT, firstLevel: 1, hovered: this.treeHovered });
+      .child(div().flex_1().min_w(0).truncate().child(label));
+    if (this.hot === key) {
+      row.children(this.folderRowActions(files, scope, id));
+    }
+    return this.hoverable(withTreeIndent(row, colors, { depth: depth + 1, height: ROW_HEIGHT, firstLevel: 1, hovered: this.treeHovered }), key);
   },
 
   walkTree(colors, node, scope, depth, prefix, out) {
@@ -801,7 +823,7 @@ export const panelMethods = {
       const folded = foldSingleChildren(name, child);
       const id = `${scope}:${prefix}${folded.label}`;
       const open = !this.closed.has(id);
-      out.push(this.folderRow(colors, id, folded.label, depth, open));
+      out.push(this.folderRow(colors, id, folded.label, depth, open, filesUnder(folded.node), scope));
       if (open) {
         this.walkTree(colors, folded.node, scope, depth + 1, `${prefix}${folded.label}/`, out);
       }

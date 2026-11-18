@@ -59,6 +59,9 @@ export const settingsLoaded = () => Boolean(shared(CACHE_KEY));
 
 export const getSetting = (section, key, fallback) => readSetting(shared(CACHE_KEY), section, key, fallback);
 
+// terminal.inPanel: terminals show in the bottom panel, not in the editor tab bar.
+export const terminalsInPanel = () => getSetting("terminal", "inPanel", true) !== false;
+
 async function writeSettings(section, values) {
   try {
     const { text, settings, error } = await readSettingsFile();

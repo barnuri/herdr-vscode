@@ -1,3 +1,6 @@
+import { displayTitle } from "./terminal-core.js";
+
+export { displayTitle };
 const STATUS_RANK = { blocked: 5, working: 4, orch: 3.5, done: 3, idle: 2, unknown: 1 };
 const ORCH_STATUS = "orch";
 const ORCH_TTL_SECS = 120;
@@ -7,8 +10,6 @@ const LIVE_JOB = "live";
 const IDLE_AGENT_STATUSES = new Set(["idle", "done"]);
 const SHELL_STATUS = "shell";
 const BUSY_STATUS = "running";
-const TITLE_PREFIX = /^[A-Z]{1,4} \| /;
-const SHELL_TITLE = /^Current Folder:/;
 
 export const SORTS = ["opened", "status", "name"];
 export const GROUPINGS = ["folder", "tree"];
@@ -62,15 +63,6 @@ function spaceIndex(spaces) {
     }
   }
   return byTab;
-}
-
-// Agent titles look like "OC | session title"; shells set "Current Folder: ~/x".
-export function displayTitle(title, label) {
-  const clean = String(title ?? "").trim().replace(TITLE_PREFIX, "");
-  if (!clean || SHELL_TITLE.test(clean) || clean.toLowerCase() === String(label).toLowerCase()) {
-    return "";
-  }
-  return clean;
 }
 
 function terminalStatus(pane) {
