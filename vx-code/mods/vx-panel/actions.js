@@ -1,7 +1,8 @@
 // A change never runs on one click: the mod reopens itself as a dialog with props { confirm: spec }
 // and runs the action from there, since closing a copy first could drop the exec in flight.
-import { openOverlay, closeOverlay, exec, notify, props } from "herdr";
+import { openOverlay, closeOverlay, exec, notify, props, run } from "herdr";
 import { bump } from "./ws.js";
+import { logInfo, logError } from "./log.js";
 
 const DIALOG_WIDTH = 440;
 const DIALOG_HEIGHT = 150;
@@ -18,9 +19,28 @@ export function askConfirm(mod, spec) {
   openOverlay({ mod, kind: "dialog", width: DIALOG_WIDTH, height, props: { confirm: spec } });
 }
 
+const LOG_MOD = "actions";
+
+// A step is a program ({ cmd, args }) or a Herdr command ({ command, args }).
+function runHerdrCommand(step) {
+  try {
+    run(step.command, step.args ?? {});
+    return { code: 0, stdout: "", stderr: "" };
+  } catch (error) {
+    return { code: -1, stdout: "", stderr: String(error?.message ?? error) };
+  }
+}
+
 function runStep(action, step) {
+  if (step.command) {
+    return Promise.resolve(runHerdrCommand(step));
+  }
   return exec(step.cmd, step.args, { cwd: step.cwd ?? action.cwd, on: action.on ?? null, timeout: action.timeout ?? ACTION_TIMEOUT_MS })
     .catch((error) => ({ code: -1, stdout: "", stderr: String(error?.message ?? error) }));
+}
+
+function describeStep(step) {
+  return step.command ? `${step.command} ${JSON.stringify(step.args ?? {})}` : [step.cmd, ...(step.args ?? [])].join(" ");
 }
 
 function notifyResult(action, result) {
@@ -37,8 +57,10 @@ export async function runAction(action) {
   for (const step of action.steps ?? [action]) {
     result = await runStep(action, step);
     if (result.code !== 0) {
+      await logError(LOG_MOD, `${action.doing ?? "action"} failed: ${describeStep(step)}`, { code: result.code, stderr: result.stderr, stdout: result.stdout });
       break;
     }
+    await logInfo(LOG_MOD, `${action.doing ?? "action"}: ${describeStep(step)}`);
   }
   notifyResult(action, result);
   if (action.root !== undefined) {

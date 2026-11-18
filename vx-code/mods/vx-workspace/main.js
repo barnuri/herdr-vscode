@@ -5,9 +5,11 @@ import {
   ctx, workspace, active, setActive, changedAt, git, findWorkspaceFile, folderRoots, loadWorkspace, rootFor,
   baseName, editWorkspaceFile, writeText, repoTop,
 } from "./ws.js";
-import { newWorkspace, stringifyWorkspace, workspaceName } from "./ws-core.js";
+import { newWorkspace, stringifyWorkspace, workspaceName, parentOf } from "./ws-core.js";
 import { parseStatus } from "./git-core.js";
-import { askConfirm, confirmMethods } from "./actions.js";
+import { askConfirm, confirmMethods, runAction } from "./actions.js";
+import { CLIPBOARD_KEY, pastePlan } from "./fileops-core.js";
+import { logInfo } from "./log.js";
 import { TEXT, Icon, IconButton, ConfirmView } from "./ui.js";
 import { loadIcons } from "./icons.js";
 import { showInViewer } from "./tabs.js";
@@ -54,7 +56,14 @@ class VxWorkspace extends View {
     preview: "commandPreview",
     finder: "commandFinder",
     fetch: "commandFetch",
+    openSide: "commandOpenSide",
+    fileHistory: "commandFileHistory",
+    clip: "commandClip",
+    paste: "commandPaste",
+    delete: "commandDelete",
+    renameFile: "commandRenameFile",
   };
+  static FILES_MOD = "vx-files";
 
   static errorText(error) {
     return String(error?.message ?? error);
@@ -413,6 +422,77 @@ class VxWorkspace extends View {
 
   commandPreview(command) {
     showInViewer("vx-files", { root: command.root, on: null, rel: command.rel }, baseName(command.rel));
+  }
+
+  static activeSpaceId() {
+    return spaces().find((space) => space.active)?.id;
+  }
+
+  // A kept viewer of its own beside the current pane, like VS Code's Open to the Side.
+  commandOpenSide(command) {
+    const space = VxWorkspace.activeSpaceId();
+    run("pane.split", { direction: "right", mod: VxWorkspace.FILES_MOD, props: { mode: "view", space, fixed: true, file: { root: command.root, rel: command.rel } } });
+  }
+
+  commandFileHistory(command) {
+    const space = VxWorkspace.activeSpaceId();
+    run("tab.new", { space, name: `History: ${baseName(command.rel)}`, mod: VxWorkspace.FILES_MOD, props: { mode: "view", space, fixed: true, history: "file", file: { root: command.root, rel: command.rel } } });
+  }
+
+  commandClip(command) {
+    setShared(CLIPBOARD_KEY, { path: command.path, cut: command.cut });
+    logInfo(VxWorkspace.MOD, command.cut ? "cut" : "copy", command.path);
+  }
+
+  // Copies (cp -R) or moves (mv) the clipboard entry into the folder; replacing asks first and trashes the old one.
+  async commandPaste(command) {
+    const clip = shared(CLIPBOARD_KEY);
+    const listing = await exec("ls", ["-A", command.folder]).catch(() => null);
+    const plan = pastePlan(clip, command.folder, (listing?.stdout ?? "").split("\n").filter(Boolean));
+    if (plan.skip) {
+      notify({ title: "Nothing pasted", body: plan.reason, level: "info" });
+      return;
+    }
+    const move = plan.move ? { cmd: "mv", args: ["-n", plan.source, plan.target] } : { cmd: "cp", args: ["-R", "-n", plan.source, plan.target] };
+    const action = { doing: plan.move ? "Moving" : "Copying", done: `Pasted ${baseName(plan.target)}`, root: command.folder, steps: [move] };
+    if (plan.move) {
+      setShared(CLIPBOARD_KEY, null);
+    }
+    if (!plan.conflict) {
+      await runAction(action);
+      return;
+    }
+    askConfirm(VxWorkspace.MOD, {
+      title: `Replace ${baseName(plan.target)}?`,
+      detail: `${command.folder} already has it. The old one goes to the Trash.`,
+      label: "Replace",
+      danger: true,
+      action: { ...action, steps: [{ cmd: "trash", args: [plan.target] }, move] },
+    });
+  }
+
+  commandDelete(command) {
+    askConfirm(VxWorkspace.MOD, {
+      title: `Delete ${baseName(command.path)}?`,
+      detail: `Moves the ${command.dir ? "folder and everything in it" : "file"} to the Trash. You can put it back from there.`,
+      label: "Move to Trash",
+      danger: true,
+      action: { doing: "Deleting", done: `Moved ${baseName(command.path)} to the Trash`, root: parentOf(command.path), steps: [{ cmd: "trash", args: [command.path] }] },
+    });
+  }
+
+  async commandRenameFile(command) {
+    const name = command.name;
+    if (!name || name.includes("/") || name === baseName(command.path)) {
+      return;
+    }
+    const target = `${parentOf(command.path)}/${name}`;
+    const exists = await exec("test", ["-e", target]).catch(() => null);
+    if (exists?.code === 0) {
+      notify({ title: "Not renamed", body: `${name} already exists.`, level: "error" });
+      return;
+    }
+    await runAction({ doing: "Renaming", done: `Renamed to ${name}`, root: parentOf(command.path), steps: [{ cmd: "mv", args: ["-n", command.path, target] }] });
   }
 
   commandFinder(command) {

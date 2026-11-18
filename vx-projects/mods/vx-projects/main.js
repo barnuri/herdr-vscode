@@ -1,3 +1,4 @@
+import { logError } from "./log.js";
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { theme, spaces, panes, run, exec, home, readTextFile, writeTextFile, checking, nextCommand, notify, props } from "herdr";
@@ -129,6 +130,7 @@ class VxProjects extends View {
         }
       } catch (error) {
         this.error = String(error?.message ?? error);
+        logError("vx-projects", "discovery failed", this.error);
       }
       this.scanning = false;
       cx.notify();
@@ -145,6 +147,9 @@ class VxProjects extends View {
     const results = await Promise.allSettled(runs);
     const failures = results.filter((result) => result.status === "rejected").map((result) => String(result.reason?.message ?? result.reason));
     this.error = failures.length ? `Discovery failed: ${failures.join("\n")}` : null;
+    if (this.error) {
+      logError("vx-projects", this.error);
+    }
     return results.flatMap((result) => (result.status === "fulfilled" ? result.value.filter(Boolean) : []));
   }
 
@@ -161,7 +166,7 @@ class VxProjects extends View {
     const file = this.path(CACHE_FILE);
     const previous = await readTextFile(file).catch(() => null);
     await this.ensureFolder(file);
-    await writeTextFile(file, `${JSON.stringify(projects)}\n`, previous).catch((error) => console.log(`vx-projects: cache not saved: ${error}`));
+    await writeTextFile(file, `${JSON.stringify(projects)}\n`, previous).catch((error) => logError("vx-projects", "cache not saved", String(error)));
   }
 
   async ensureFolder(file) {

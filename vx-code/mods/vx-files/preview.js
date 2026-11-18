@@ -7,10 +7,13 @@ import { parseLog, LOG_FORMAT, parseHunks } from "./git-core.js";
 import { lexLines, languageOf, syntaxColors } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, codeFont, codeSize, tint } from "./ui.js";
 import { viewerValue, viewerTab, keptTabs, showInViewer } from "./tabs.js";
+import { AUTOSAVE_KEY, autoSaveDue } from "./fileops-core.js";
+import { logInfo, logError } from "./log.js";
 
 const MOD = "vx-files";
 const BLAME_W = 230;
 const POLL_MS = 2000;
+const AUTOSAVE_TICK_MS = 250;
 const MAX_LINES = 20000;
 const MAX_LEXED_LINES = 6000;
 const TAB_SPACES = "    ";
@@ -102,6 +105,10 @@ export const previewMethods = {
       this.wantHistory = initProps.history;
     }
     cx.timer.every(POLL_MS, (cx) => this.syncPreview(cx, true));
+    cx.timer.every(AUTOSAVE_TICK_MS, (cx) => {
+      this.autoSaveTick(cx);
+      this.takeFileMenuCommand(cx);
+    });
     this.syncPreview(cx);
   },
 
@@ -140,7 +147,11 @@ export const previewMethods = {
     setShared(VIEW_KEY, { ...(shared(VIEW_KEY) ?? {}), [this.viewSpace]: { ...this.propsFile, at: Date.now() } });
   },
 
-  resetFile(value, key) {
+  resetFile(value, key, cx) {
+    this.autoSaveTick(cx, true);
+    this.editor?.release();
+    this.writable = false;
+    this.editChecked = false;
     this.fileKey = key;
     this.file = value;
     this.text = undefined;
@@ -176,7 +187,7 @@ export const previewMethods = {
     }
     const key = `${value.on ?? ""}|${value.root}/${value.rel}`;
     if (key !== this.fileKey) {
-      this.resetFile(value, key);
+      this.resetFile(value, key, cx);
     } else if (!poll) {
       return;
     }
@@ -197,7 +208,7 @@ export const previewMethods = {
         }
         if (await this.readText(file, cx)) {
           await this.loadHunks(file);
-          this.applyEditWanted(cx);
+          await this.applyEditWanted(cx);
         }
       } finally {
         this.readingPreview = false;
@@ -219,13 +230,42 @@ export const previewMethods = {
   },
 
   // showInViewer(..., { edit: true }) opens the file straight in Edit mode.
-  applyEditWanted(cx) {
-    if (!this.editWanted) {
+  // Files open editable like VS Code's: writable, local, not an image, not truncated, not rendered Markdown.
+  async applyEditWanted(cx) {
+    const wanted = this.editWanted;
+    this.editWanted = false;
+    if (this.editor || (this.editChecked && !wanted)) {
       return;
     }
-    this.editWanted = false;
-    if (!this.editor) {
-      this.startEdit(cx);
+    this.editChecked = true;
+    if (!(await this.canEdit())) {
+      return;
+    }
+    this.startEdit(cx, { auto: !wanted });
+  },
+
+  async canEdit() {
+    const file = this.file;
+    if (!file || file.on || file.untitled || IMAGE.test(file.rel) || this.truncated || this.text === undefined || this.text === null) {
+      return false;
+    }
+    if (MARKDOWN.test(file.rel) && !this.mdCode) {
+      return false;
+    }
+    const check = await exec("test", ["-w", `${file.root}/${file.rel}`]).catch(() => null);
+    this.writable = check?.code === 0;
+    return this.writable;
+  },
+
+  // Auto save (shared "vx.files.autoSave": afterDelay by default, or off) writes after a pause
+  // in typing, or at once when the shown file changes (leaving = true).
+  autoSaveTick(cx, leaving = false) {
+    if (!this.editor || this.untitled) {
+      return;
+    }
+    const dirty = this.editor.value() !== this.saved;
+    if (autoSaveDue({ mode: shared(AUTOSAVE_KEY), dirty, writable: this.writable, editedAt: this.editedAt ?? 0, now: Date.now(), blurred: leaving })) {
+      this.save(cx, { quiet: true });
     }
   },
 
@@ -262,6 +302,10 @@ export const previewMethods = {
 
   applyText(file, text, cx) {
     this.problem = null;
+    if (this.editor && this.editor.value() === this.saved && text !== this.saved) {
+      this.editor.set_value(text);
+      this.saved = text;
+    }
     this.text = text;
     const all = text.replace(/\r/g, "").replace(/\t/g, TAB_SPACES).split("\n");
     this.lines = all.slice(0, MAX_LINES);
@@ -509,11 +553,13 @@ export const previewMethods = {
     setShared(DIRTY_KEY, next);
   },
 
-  startEdit(cx) {
+  startEdit(cx, { auto = false } = {}) {
     if (!this.file || this.file.on || this.text === undefined || this.text === null) {
       return;
     }
-    this.keepTab();
+    if (!auto) {
+      this.keepTab();
+    }
     const colors = syntaxColors(theme());
     this.editor = EditorState.new({
       language: languageOf(this.file.rel) ?? undefined, value: this.text, font_family: codeFont(), font_size: codeSize(),
@@ -521,10 +567,18 @@ export const previewMethods = {
     });
     this.saved = this.text;
     this.editor.on("change", (_event, cx) => {
-      this.setDirty(this.editor.value() !== this.saved);
+      const dirty = this.editor.value() !== this.saved;
+      this.editedAt = Date.now();
+      if (dirty) {
+        this.keepTab();
+      }
+      this.setDirty(dirty);
       cx.notify();
     });
-    this.editor.focus();
+    this.editor.on("blur", (_event, cx) => this.autoSaveTick(cx, true));
+    if (!auto) {
+      this.editor.focus();
+    }
     cx.notify();
   },
 
@@ -556,7 +610,7 @@ export const previewMethods = {
     cx.notify();
   },
 
-  save(cx) {
+  save(cx, { quiet = false } = {}) {
     const file = this.file;
     if (!this.editor || !file) {
       return;
@@ -569,19 +623,29 @@ export const previewMethods = {
     if (text === this.saved) {
       return;
     }
+    if (this.saving) {
+      return;
+    }
+    this.saving = true;
     cx.spawn(async (cx) => {
       try {
         await writeTextFile(`${file.root}/${file.rel}`, text, this.saved);
+        logInfo(MOD, quiet ? "auto saved" : "saved", `${file.root}/${file.rel}`);
         this.saved = text;
         this.text = text;
         this.setDirty(false);
         bump(file.root);
-        notify({ title: `Saved ${fileName(file.rel)}`, level: "success", timeout: SAVED_TOAST_MS });
+        if (!quiet) {
+          notify({ title: `Saved ${fileName(file.rel)}`, level: "success", timeout: SAVED_TOAST_MS });
+        }
       } catch (error) {
+        logError(MOD, "save failed", `${file.root}/${file.rel}: ${error}`);
         const body = STALE_WRITE.test(String(error))
           ? "The file changed on disk since you opened it. Revert to load it, then edit again."
           : String(error?.message ?? error);
         notify({ title: "Not saved", body, level: "error", timeout: SAVE_ERROR_TOAST_MS });
+      } finally {
+        this.saving = false;
       }
       cx.notify();
     });
@@ -589,6 +653,17 @@ export const previewMethods = {
 
   setMdCode(on, cx) {
     this.mdCode = on;
+    if (!on && this.editor && this.editor.value() === this.saved) {
+      this.editor.release();
+      this.editor = null;
+    }
+    if (on) {
+      this.editChecked = false;
+      cx.spawn(async (cx) => {
+        await this.applyEditWanted(cx);
+        cx.notify();
+      });
+    }
     cx.notify();
   },
 
@@ -606,8 +681,7 @@ export const previewMethods = {
     return el
       .when(unsaved, (row) => row
         .child(toolbarLink(t, "pv-revert", "Revert", (cx) => this.revert(cx), false))
-        .child(toolbarLink(t, "pv-save", this.untitled ? "Save As ⌘S" : "Save ⌘S", (cx) => this.save(cx), true)))
-      .child(IconButton({ id: "pv-edit", icon: "pencil", label: this.editor ? "Stop editing" : "Edit this file", active: Boolean(this.editor), onClick: (cx) => this.toggleEdit(cx), size: 22 }));
+        .child(toolbarLink(t, "pv-save", this.untitled ? "Save As ⌘S" : "Save ⌘S", (cx) => this.save(cx), true)));
   },
 
   previewToolbar(t, file, isMarkdown) {
@@ -656,8 +730,9 @@ export const previewMethods = {
       return div().id("pv-md-body").flex_1().min_h(0).overflow_y_scrollbar().px(28).py(18)
         .child(TextView.markdown(`md-${this.fileKey}`, this.text).w_full().text_size(TEXT.title).selectable(true).scrollable(false));
     }
-    if (this.editor) {
+    if (this.editor && !this.blameOn) {
       return div().id("pv-editor").flex_1().min_h(0).font_family(codeFont())
+        .on_mouse_down("right", (event) => this.openFileMenu(event.position))
         .on_key_down((event, cx) => {
           if (event.key === "s" && event.modifiers?.platform) {
             cx.stop_propagation();
@@ -689,7 +764,7 @@ export const previewMethods = {
     if (body) {
       return root.child(body);
     }
-    root.child(h_flex().flex_1().min_h(0).child(this.codeRows(t)).when(Boolean(this.history), (el) => el.child(this.historyDrawer(t))));
+    root.child(h_flex().id("pv-code-area").flex_1().min_h(0).on_mouse_down("right", (event) => this.openFileMenu(event.position)).child(this.codeRows(t)).when(Boolean(this.history), (el) => el.child(this.historyDrawer(t))));
     if (this.truncated) {
       root.child(Message(`Showing the first ${MAX_LINES.toLocaleString()} lines.`));
     }

@@ -140,7 +140,7 @@ const isShownConfirmArg = (arg) => !String(arg).startsWith("--no-optional") && a
 
 function ConfirmStep(t, step) {
   return div().px(8).py(5).rounded(6).bg(t.raised).text_size(TEXT.caption).font_family(codeFont()).text_color(t.dim).truncate()
-    .child([step.cmd, ...step.args.filter(isShownConfirmArg)].join(" "));
+    .child(step.command ? step.command : [step.cmd, ...step.args.filter(isShownConfirmArg)].join(" "));
 }
 
 function confirmKeyDown(view, event, cx) {

@@ -9,6 +9,7 @@ import { describeTab, tabIcon, repoColor } from "./kinds.js";
 import { popupMethods, postTabs } from "./popups.js";
 import { loadIcons } from "./icons.js";
 import { findNode } from "./layout-core.js";
+import { logInfo } from "./log.js";
 import { askConfirm, confirmMethods } from "./actions.js";
 import { isUntitledName, untitledDirtyKey, nextUntitledNumber, UNTITLED_PREFIX, UNTITLED_COUNTER_KEY } from "./untitled-core.js";
 
@@ -60,8 +61,50 @@ class VxTabs extends View {
     run("tab.new", { space: space?.id, name, mod: VxTabs.FILES_MOD, props: { mode: "view", space: space?.id, untitled: { name, folder } } });
   }
 
+  static EMPTY_MOD = "vx-empty";
+  static EMPTY_SETTLE_MS = 1500;
+
+  static isEmptyTab(tab) {
+    return panes().some((pane) => pane.tab === tab.id && pane.mod === VxTabs.EMPTY_MOD);
+  }
+
+  static runsProgram(tab) {
+    return panes().some((pane) => pane.tab === tab.id && pane.terminal && (pane.program?.agent || !pane.program?.shell));
+  }
+
+  static spaceOf(tab) {
+    return spaces().find((space) => (space.tabs ?? []).some((candidate) => candidate.id === tab.id));
+  }
+
+  // Closing the last tab keeps the space: the empty editor takes its place (a running program still asks).
+  static keepSpace(tab) {
+    const space = VxTabs.spaceOf(tab);
+    const others = (space?.tabs ?? []).filter((candidate) => candidate.id !== tab.id);
+    if (!space || others.length > 0 || VxTabs.runsProgram(tab)) {
+      return;
+    }
+    VxTabs.emptyOpenedAt = Date.now();
+    run("tab.new", { space: space.id, name: "Welcome", mod: VxTabs.EMPTY_MOD });
+  }
+
+  // The empty editor leaves as soon as anything else opens in its space.
+  static closeStaleEmpty() {
+    if (Date.now() - (VxTabs.emptyOpenedAt ?? 0) < VxTabs.EMPTY_SETTLE_MS) {
+      return;
+    }
+    for (const space of spaces()) {
+      const tabs = space.tabs ?? [];
+      const empties = tabs.filter((tab) => VxTabs.isEmptyTab(tab));
+      if (empties.length > 0 && empties.length < tabs.length) {
+        empties.forEach((tab) => run("tab.close", { id: tab.id, confirmed: true }));
+      }
+    }
+  }
+
   // An Untitled tab with text asks before its buffer is thrown away.
   static closeTab(tab) {
+    logInfo(VxTabs.MOD, "close tab", tab.name);
+    VxTabs.keepSpace(tab);
     if (!VxTabs.untitledDirty(tab)) {
       run("tab.close", { id: tab.id });
       return;
@@ -138,6 +181,12 @@ class VxTabs extends View {
         if (command === "untitled") {
           VxTabs.openUntitled(VxTabs.activeSpace());
         }
+        if (command === "close") {
+          const tab = VxTabs.activeSpace()?.tabs?.find((candidate) => candidate.active);
+          if (tab) {
+            VxTabs.closeTab(tab);
+          }
+        }
         cx.notify();
       }
     });
@@ -148,6 +197,7 @@ class VxTabs extends View {
     this.recordRecentTab();
     this.applyPostedCommand();
     this.pruneClosedTabs();
+    VxTabs.closeStaleEmpty();
   }
 
   recordRecentTab() {
@@ -468,7 +518,7 @@ class VxTabs extends View {
       .on_mouse_up("left", () => this.releaseTab(tab, index, shown))
       .on_mouse_down("right", (_e, cx) => {
         cx.stop_propagation();
-        openOverlay({ mod: VxTabs.MOD, kind: "popup", width: 240, height: 250, props: { menu: { tab: tab.id, preview: italic } } });
+        openOverlay({ mod: VxTabs.MOD, kind: "popup", width: 240, height: 300, props: { menu: { tab: tab.id, preview: italic } } });
       });
     this.styleTab(el, t, tab, pinned)
       .when(Boolean(color) && !pinned, (inner) => inner.child(div().w(3).h(14).flex_none().rounded(2).bg(color)))
@@ -610,7 +660,7 @@ class VxTabs extends View {
     }
     const t = theme();
     const space = VxTabs.activeSpace();
-    const shown = (space?.tabs ?? []).filter((x) => !x.settled);
+    const shown = (space?.tabs ?? []).filter((x) => !x.settled && !VxTabs.isEmptyTab(x));
     const active = shown.findIndex((x) => x.active);
     this.followSelection(shown, active);
     const stop = (_e, cx) => cx.stop_propagation();

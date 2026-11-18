@@ -4,9 +4,10 @@ import { theme, home, openOverlay, closeOverlay, props, run, notify, layout, che
 import { ctx, contextKey, git, repoTop, changedAt, baseName, workspace } from "./ws.js";
 import { parseStatus } from "./git-core.js";
 import { workspaceProblems, countProblems } from "./panel-core.js";
-import { askConfirm, confirmMethods } from "./actions.js";
+import { confirmMethods, runAction } from "./actions.js";
 import { TEXT, Icon, ConfirmView, stateLook } from "./ui.js";
 import { findNode } from "./layout-core.js";
+import { AUTOSAVE_KEY, AUTOSAVE_OFF, AUTOSAVE_AFTER_DELAY, autoSaveMode } from "./fileops-core.js";
 
 class VxStatus extends View {
   static MOD = "vx-status";
@@ -127,14 +128,11 @@ class VxStatus extends View {
     const name = baseName(repo.top);
     const specs = {
       fetch: { title: `Fetch ${name}?`, detail: "Downloads new commits from the remote. Nothing local changes.", label: "Fetch", args: ["fetch", "--prune"], doing: "Fetching", done: `Fetched ${name}` },
-      pull: { title: `Pull ${VxStatus.plural(repo.behind, "commit")} into ${repo.branch}?`, detail: `Fast-forward only from ${upstream}. Stops instead of merging if your branch has diverged.`, label: "Pull", args: ["pull", "--ff-only"], doing: "Pulling", done: `Pulled ${name}` },
+      pull: { title: `Pull ${VxStatus.plural(repo.behind, "commit")} into ${repo.branch}?`, detail: `From ${upstream}.`, label: "Pull", args: ["pull"], doing: "Pulling", done: `Pulled ${name}` },
       push: { title: `Push ${VxStatus.plural(repo.ahead, "commit")} from ${repo.branch}?`, detail: `To ${upstream}. Other people will see these commits.`, label: "Push", args: ["push"], doing: "Pushing", done: `Pushed ${name}`, danger: true },
     };
     const spec = specs[verb];
-    askConfirm(VxStatus.MOD, {
-      title: spec.title, detail: spec.detail, label: spec.label, danger: spec.danger,
-      action: { cmd: "git", args: spec.args, cwd: repo.top, on: repo.on, doing: spec.doing, done: spec.done, root: repo.top },
-    });
+    runAction({ cmd: "git", args: spec.args, cwd: repo.top, on: repo.on, doing: spec.doing, done: spec.done, root: repo.top });
   }
 
   // Prefers the sidebar view; falls back to the right panel stack.
@@ -179,8 +177,8 @@ class VxStatus extends View {
         .child(div().text_size(11).text_color(t.dim).child(sub));
     const upstream = repo.upstream ?? VxStatus.NO_UPSTREAM;
     return v_flex().id("vx-status-menu").size_full().p(6).bg(t.popover ?? t.surface)
-      .when(Boolean(repo.ahead), (el) => el.child(item("push", `Push ${VxStatus.plural(repo.ahead, "commit")}…`, `to ${upstream}`, "push")))
-      .when(Boolean(repo.behind), (el) => el.child(item("pull", `Pull ${VxStatus.plural(repo.behind, "commit")}…`, `from ${upstream}, fast-forward only`, "pull")))
+      .when(Boolean(repo.ahead), (el) => el.child(item("push", `Push ${VxStatus.plural(repo.ahead, "commit")}`, `to ${upstream}`, "push")))
+      .when(Boolean(repo.behind), (el) => el.child(item("pull", `Pull ${VxStatus.plural(repo.behind, "commit")}`, `from ${upstream}`, "pull")))
       .child(item("fetch", "Fetch…", "update ↑ ↓ from the remote", "fetch"));
   }
 
@@ -278,6 +276,11 @@ class VxStatus extends View {
     if (ws?.name && mid) {
       right.push(this.chip(t, "st-wsname", { icon: "layers", color: t.muted, tip: ws.file ?? ws.name }, ws.name));
     }
+    const autoSaveOn = autoSaveMode(shared(AUTOSAVE_KEY)) !== AUTOSAVE_OFF;
+    right.push(this.chip(t, "st-autosave", {
+      icon: "check", color: autoSaveOn ? t.muted : t.dim, tip: autoSaveOn ? "Auto Save after a 1 s pause · click to turn off" : "Auto Save is off (⌘S saves) · click to turn on",
+      onClick: () => setShared(AUTOSAVE_KEY, autoSaveOn ? AUTOSAVE_OFF : AUTOSAVE_AFTER_DELAY),
+    }, div().child(autoSaveOn ? "Auto Save" : "Auto Save: off")));
   }
 
   render() {

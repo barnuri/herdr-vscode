@@ -7,7 +7,7 @@ import { primaryAction, discardPlan, statBlocks, subjectInfo } from "./scm-core.
 import { TEXT, Icon, IconButton, FileIcon, Message, markColor, tint, SPIN_MS } from "./ui.js";
 import { showInViewer } from "./tabs.js";
 import { RepoButton } from "./repo-picker.js";
-import { askConfirm } from "./actions.js";
+import { askConfirm, runAction } from "./actions.js";
 import { openScmMenu, openScmAsk } from "./scm-popups.js";
 
 const MOD = "vx-changes";
@@ -210,8 +210,10 @@ export const panelMethods = {
     }
   },
 
+  // A refresh asked for while one runs (the repo changed) runs right after it, not on the next timer.
   refresh(cx) {
     if (this.loading) {
+      this.refreshAgain = true;
       return;
     }
     const context = ctx();
@@ -228,6 +230,10 @@ export const panelMethods = {
       } finally {
         this.loading = false;
         cx.notify();
+        if (this.refreshAgain) {
+          this.refreshAgain = false;
+          this.refresh(cx);
+        }
       }
     });
   },
@@ -325,11 +331,11 @@ export const panelMethods = {
     return { cmd: "git", args, cwd: this.root, on: this.on ?? null, doing, done, root: this.root };
   },
 
-  // Sync pulls (rebasing unpushed commits on top), then pushes.
+  // Sync pulls, then pushes, with git's own config (no --rebase / --ff-only flags), like VS Code.
   syncSpec(branch, upstream, ahead, afterCommit) {
     const steps = [];
     if (this.behind || !afterCommit) {
-      steps.push({ cmd: "git", args: ahead ? ["pull", "--rebase"] : ["pull", "--ff-only"] });
+      steps.push({ cmd: "git", args: ["pull"] });
     }
     if (ahead) {
       steps.push({ cmd: "git", args: ["push"] });
@@ -352,7 +358,7 @@ export const panelMethods = {
       return { title: `Fetch ${name}?`, detail: "Downloads new commits and branches from the remote. Nothing local changes.", label: "Fetch", action: this.gitAction(["fetch", "--prune"], "Fetching", `Fetched ${name}`) };
     }
     if (kind === "pull") {
-      return { title: `Pull into ${branch}?`, detail: `Fast-forward only from ${upstream}. Stops instead of merging if your branch has diverged.`, label: "Pull", action: this.gitAction(["pull", "--ff-only"], "Pulling", `Pulled ${name}`) };
+      return { title: `Pull into ${branch}?`, detail: `From ${upstream}, as your git config says.`, label: "Pull", action: this.gitAction(["pull"], "Pulling", `Pulled ${name}`) };
     }
     if (kind === "push") {
       return { title: `Push ${branch}?`, detail: `${afterCommit ? "Your new commit and any others" : plural(ahead, "commit")} go to ${upstream}. Other people will see them.`, label: "Push", danger: true, action: this.gitAction(["push"], "Pushing", `Pushed ${branch}`) };
@@ -373,7 +379,7 @@ export const panelMethods = {
       this.note = "Detached HEAD: make a branch first.";
       return;
     }
-    askConfirm(MOD, this.gitSpec(resolvedKind, options));
+    runAction(this.gitSpec(resolvedKind, options).action);
   },
 
   indexArgs(action, paths) {
@@ -611,8 +617,8 @@ export const panelMethods = {
     const upstream = this.upstream;
     openScmMenu(this.uid, [
       { header: "Remote", id: "h1" },
-      { id: "pull", icon: "arrow-down", color: colors.ansi4, label: "Pull…", sub: this.pullSub(upstream), subColor: colors.ansi4, cmd: { cmd: "pull" }, disabled: !upstream },
-      { id: "push", icon: "arrow-up", color: colors.ansi6, label: upstream ? "Push…" : "Publish Branch…", sub: this.ahead ? `↑${this.ahead}` : "", subColor: colors.ansi6, cmd: { cmd: upstream ? "push" : "publish" }, disabled: !this.branch },
+      { id: "pull", icon: "arrow-down", color: colors.ansi4, label: "Pull", sub: this.pullSub(upstream), subColor: colors.ansi4, cmd: { cmd: "pull" }, disabled: !upstream },
+      { id: "push", icon: "arrow-up", color: colors.ansi6, label: upstream ? "Push" : "Publish Branch", sub: this.ahead ? `↑${this.ahead}` : "", subColor: colors.ansi6, cmd: { cmd: upstream ? "push" : "publish" }, disabled: !this.branch },
       { id: "sync", icon: "sync", color: colors.accent, label: "Sync…", sub: "pull, then push", cmd: { cmd: "sync" }, disabled: !upstream },
       { id: "fetch", icon: "cloud", color: colors.muted, label: "Fetch…", cmd: { cmd: "fetch" } },
       { header: "Stash", id: "h2" },

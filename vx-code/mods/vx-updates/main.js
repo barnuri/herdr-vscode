@@ -128,8 +128,6 @@ class VxUpdates extends View {
       .when(Boolean(info.core?.error), (el) => el.child(div().px(12).text_size(TEXT.caption).text_color(t.ansi1).whitespace_normal().child(info.core.error)))
       .child(div().px(12).py(2).text_size(TEXT.caption).text_color(t.dim).child(this.checkedText(info)))
       .when(Boolean(status), (el) => el.child(div().px(12).py(2).text_size(TEXT.caption).text_color(t.ansi3).whitespace_normal().child(status)))
-      .when(this.dryRun, (el) => el.child(div().px(12).py(2).text_size(TEXT.caption).text_color(t.ansi5).whitespace_normal()
-        .child(`Dry run: ~/.config/herdr-app/${UpdatesWorker.DRY_RUN_FILE} exists, so nothing is installed.`)))
       .child(this.buttons(info, busy))
       .when(notes.length > 0, (el) => el.child(SectionHead("What's new", notes.length)).children(notes.map((note) => this.noteBlock(t, note))))
       .child(SectionHead("Automatic updates"))

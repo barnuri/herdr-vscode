@@ -6,6 +6,7 @@ import { previewMethods } from "./preview.js";
 import { timelineMethods } from "./timeline.js";
 import { loadIcons } from "./icons.js";
 import { untitledMethods } from "./untitled.js";
+import { fileMenuMethods } from "./file-menu.js";
 import SaveAsDialog from "./save-as-dialog.js";
 
 class VxFiles extends View {
@@ -16,6 +17,10 @@ class VxFiles extends View {
 
   init(given, cx) {
     const initProps = props() ?? given ?? {};
+    if (initProps.fileMenu) {
+      this.fileMenu = initProps.fileMenu;
+      return;
+    }
     if (initProps.menu) {
       this.menu = initProps.menu;
       return;
@@ -80,6 +85,9 @@ class VxFiles extends View {
     if (this.saveAs) {
       return this.saveAs.render();
     }
+    if (this.fileMenu) {
+      return this.renderFileMenu();
+    }
     if (this.menu) {
       return this.renderMenu();
     }
@@ -93,5 +101,5 @@ class VxFiles extends View {
   }
 }
 
-Object.assign(VxFiles.prototype, treeMethods, previewMethods, timelineMethods, untitledMethods);
+Object.assign(VxFiles.prototype, treeMethods, previewMethods, timelineMethods, untitledMethods, fileMenuMethods);
 export default VxFiles;

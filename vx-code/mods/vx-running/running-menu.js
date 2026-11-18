@@ -10,7 +10,6 @@ import { TEXT, Icon } from "./ui.js";
 
 class RunningMenu {
   static MOD = "vx-running";
-  static HERDR_APP = "herdr-app";
   static STACK = "sidebar-views";
   static SCM_VIEW = "scm";
   static SIDEBAR = "sidebar";
@@ -20,11 +19,13 @@ class RunningMenu {
   static PAD_PX = 8;
   static ICON_PX = 13;
 
-  static closeAction(paneIds) {
+  // Ending the terminal closes its pane, and its tab and space when it was the last one, so
+  // closing many panes never stops on a "close the space?" question.
+  static closeAction(rows) {
     return {
       doing: "Closing",
       done: "Closed",
-      steps: paneIds.map((pane) => ({ cmd: RunningMenu.HERDR_APP, args: ["do", "pane.close", "--pane", pane] })),
+      steps: rows.map((row) => (row.terminal ? { command: "terminal.kill", args: { terminal: row.terminal } } : { command: "pane.close", args: { pane: row.pane } })),
     };
   }
 
@@ -42,7 +43,7 @@ class RunningMenu {
       detail: rows.map((row) => `${row.label}${row.title ? `: ${row.title}` : ""}`).join(", "),
       label: "Close",
       danger: true,
-      action: RunningMenu.closeAction(rows.map((row) => row.pane)),
+      action: RunningMenu.closeAction(rows),
     });
   }
 

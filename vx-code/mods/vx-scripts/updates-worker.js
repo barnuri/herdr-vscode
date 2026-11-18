@@ -1,6 +1,7 @@
 // The auto-update worker. vx-titlebar (always on screen in vx-code) and the vx-updates view both
 // start one; the shared lease lets only one of them check and install (rules in updates-core.js).
-import { updates, agents, run, shared, setShared, home, appHome, exec, readTextFile, writeTextFile, notify } from "herdr";
+import { checking, updates, agents, run, shared, setShared, home, exec, readTextFile, writeTextFile, notify } from "herdr";
+import { logInfo } from "./log.js";
 import { UPDATE_CONFIG_FILE, readUpdateConfig, withUpdateConfig, appPlan, corePlan, checkDue, canAct } from "./updates-core.js";
 
 class UpdatesWorker {
@@ -12,7 +13,6 @@ class UpdatesWorker {
   static STATUS_KEY = "vx.updates.status";
   static BADGE_KEY = "vx.updates.badge";
   // While this file exists in the app home, nothing is installed or restarted, only reported.
-  static DRY_RUN_FILE = "vx-updates.dry-run";
 
   static configPath() {
     return `${home()}/${UPDATE_CONFIG_FILE}`;
@@ -39,8 +39,11 @@ class UpdatesWorker {
     }
   }
 
+  // Tests set this; a live app never dry-runs and never leaves a marker file behind.
+  static testDryRun = false;
+
   static async dryRun() {
-    return (await readTextFile(`${appHome()}/${UpdatesWorker.DRY_RUN_FILE}`).catch(() => null)) !== null;
+    return UpdatesWorker.testDryRun || checking();
   }
 
   // What the acting copy last decided: { text, dryRun, at }.
@@ -59,6 +62,7 @@ class UpdatesWorker {
       UpdatesWorker.report(`Dry run: would run ${command} for ${what}.`, true);
       return;
     }
+    logInfo("vx-updates", `${command} for ${what}`);
     run(command);
   }
 

@@ -3,6 +3,8 @@ import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, shared, setShared, home } from "herdr";
 import { baseName, parentOf } from "./ws-core.js";
 import { TEXT, Icon, Button, FileIcon } from "./ui.js";
+import { CLIPBOARD_KEY } from "./fileops-core.js";
+import { fileWebLink } from "./remote-url.js";
 
 const MOD = "vx-workspace";
 const ITEM = 28;
@@ -20,6 +22,8 @@ const REPLY_KEY = "vx.ws.reply";
 const KIND_HEADER = "header";
 const KIND_ROOT = "root";
 const KIND_RENAME = "rename";
+const KIND_RENAME_FILE = "renameFile";
+const KIND_ENTRY = "entry";
 
 export const post = (command) => setShared(COMMAND_KEY, { ...command, id: `${Date.now()}-${Math.random().toString(ID_RADIX).slice(2, ID_SUFFIX_END)}` });
 
@@ -72,18 +76,31 @@ function rootItems(menu, ws) {
   ]);
 }
 
+// VS Code's Explorer menu. Paste goes into the folder clicked, or the folder of the file clicked.
 function entryItems(menu) {
   const abs = `${menu.root.path}/${menu.rel}`;
-  const openItem = menu.dir
-    ? { id: "term", icon: "terminal", label: "Open in Terminal", cmd: { cmd: "terminal", path: abs } }
-    : { id: "preview", icon: "eye", label: "Open Preview", cmd: { cmd: "preview", root: menu.root.path, rel: menu.rel } };
+  const folder = menu.dir ? abs : parentOf(abs);
+  const clip = shared(CLIPBOARD_KEY);
+  const file = { root: menu.root.path, rel: menu.rel };
   return visible([
-    openItem,
-    { id: "open", icon: "external", label: menu.dir ? "Reveal in Finder" : "Open with Default App", cmd: { cmd: "finder", path: abs, reveal: menu.dir ? false : undefined, app: !menu.dir } },
-    { id: "reveal", icon: "folder", label: "Reveal in Finder", cmd: { cmd: "finder", path: abs, reveal: true }, off: menu.dir },
+    { id: "preview", icon: "eye", label: "Open", cmd: { cmd: "preview", ...file }, off: menu.dir },
+    { id: "side", icon: "split", label: "Open to the Side", cmd: { cmd: "openSide", ...file }, off: menu.dir },
+    { id: "term", icon: "terminal", label: "Open in Integrated Terminal", cmd: { cmd: "terminal", path: menu.dir ? abs : folder } },
+    { id: "reveal", icon: "folder", label: "Reveal in Finder", cmd: { cmd: "finder", path: abs, reveal: true } },
     { sep: true, id: "s1" },
+    { id: "cut", icon: "minus", label: "Cut", cmd: { cmd: "clip", path: abs, cut: true } },
+    { id: "copyfile", icon: "copy", label: "Copy", cmd: { cmd: "clip", path: abs, cut: false } },
+    { id: "paste", icon: "download", label: clip?.path ? `Paste ${baseName(clip.path)}` : "Paste", cmd: { cmd: "paste", folder }, off: !clip?.path },
+    { sep: true, id: "s2" },
     { id: "copy", icon: "copy", label: "Copy Path", copy: abs },
     { id: "copyrel", icon: "copy", label: "Copy Relative Path", copy: menu.rel },
+    { sep: true, id: "s3" },
+    { id: "rename", icon: "pencil", label: "Rename…", dialog: { kind: KIND_RENAME_FILE, path: abs, name: baseName(abs) } },
+    { id: "delete", icon: "trash", label: "Delete", cmd: { cmd: "delete", path: abs, dir: menu.dir } },
+    { sep: true, id: "s4", off: !menu.link },
+    { id: "remote-open", icon: "external", label: "Git: Open Remote Link", cmd: { cmd: "finder", path: menu.link }, off: !menu.link },
+    { id: "remote-copy", icon: "copy", label: "Git: Copy Remote Link", copy: menu.link, off: !menu.link },
+    { id: "history", icon: "history", label: "Git: View File History", cmd: { cmd: "fileHistory", ...file }, off: !menu.link || menu.dir },
   ]);
 }
 
@@ -92,7 +109,12 @@ export const menuMethods = {
     post(command);
   },
 
+  // An entry's menu first looks up its remote link (no link: no Git items).
   openMenu(menu) {
+    if (menu.kind === KIND_ENTRY && menu.link === undefined) {
+      fileWebLink(`${menu.root.path}/${menu.rel}`, { dir: menu.dir }).catch(() => null).then((link) => this.openMenu({ ...menu, link }));
+      return;
+    }
     const items = this.menuItems(menu);
     const separators = items.filter((item) => item.sep).length;
     const height = (items.length - separators) * ITEM + separators * SEPARATOR_HEIGHT + MENU_PADDING;
@@ -142,14 +164,14 @@ export const menuMethods = {
   },
 
   openDialog(dialog) {
-    const height = dialog.kind === KIND_RENAME ? RENAME_DIALOG_HEIGHT : NEW_DIALOG_HEIGHT;
+    const height = dialog.kind === KIND_RENAME || dialog.kind === KIND_RENAME_FILE ? RENAME_DIALOG_HEIGHT : NEW_DIALOG_HEIGHT;
     openOverlay({ mod: MOD, kind: "dialog", width: DIALOG_WIDTH, height, props: { dialog } });
   },
 
   // Text boxes are made in init (never in render).
   initDialog(dialog) {
     this.dlg = dialog;
-    if (dialog.kind === KIND_RENAME) {
+    if (dialog.kind === KIND_RENAME || dialog.kind === KIND_RENAME_FILE) {
       this.nameInput = InputState.new({ value: dialog.name, placeholder: baseName(dialog.path) });
     } else {
       this.nameInput = InputState.new({ value: dialog.name ?? "", placeholder: "my-workspace" });
@@ -179,6 +201,21 @@ export const menuMethods = {
             closeThisOverlay();
           },
         })));
+  },
+
+  renameFileDialog(t, shell, dialog) {
+    const submit = () => {
+      post({ cmd: "renameFile", path: dialog.path, name: this.nameInput.value().trim() });
+      closeThisOverlay();
+    };
+    return shell
+      .child(div().text_size(TEXT.title).font_semibold().child(`Rename ${baseName(dialog.path)}`))
+      .child(this.inputBox(t, this.nameInput))
+      .child(div().text_size(TEXT.caption).text_color(t.dim).child("A new name in the same folder. An existing name is never replaced."))
+      .child(div().flex_1())
+      .child(h_flex().gap(8).justify_end()
+        .child(Button({ id: "cancel", label: "Cancel", onClick: closeThisOverlay }))
+        .child(Button({ id: "ok", label: "Rename", primary: true, onClick: submit })));
   },
 
   newFolderRow(t, path) {
@@ -228,6 +265,9 @@ export const menuMethods = {
     const shell = v_flex().id("vx-ws-dialog").size_full().p(18).gap(10).bg(t.popover ?? t.surface).text_color(t.foreground);
     if (dialog.kind === KIND_RENAME) {
       return this.renameDialog(t, shell, dialog);
+    }
+    if (dialog.kind === KIND_RENAME_FILE) {
+      return this.renameFileDialog(t, shell, dialog);
     }
     return this.newWorkspaceDialog(t, shell, dialog);
   },
