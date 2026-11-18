@@ -3,7 +3,7 @@ import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { theme, shared, setShared, run, panes, spaces, exec, watchFolder, props, pickFolder, checking, notify } from "herdr";
 import {
   ctx, workspace, active, setActive, changedAt, git, findWorkspaceFile, folderRoots, loadWorkspace, rootFor,
-  baseName, editWorkspaceFile, writeText,
+  baseName, editWorkspaceFile, writeText, repoTop,
 } from "./ws.js";
 import { newWorkspace, stringifyWorkspace, workspaceName } from "./ws-core.js";
 import { parseStatus } from "./git-core.js";
@@ -107,6 +107,7 @@ class VxWorkspace extends View {
 
   initPanel(cx) {
     this.status = new Map();
+    this.tops = new Map();
     this.width = VxWorkspace.INITIAL_WIDTH;
     this.initExplorer();
     this.filter = "";
@@ -190,7 +191,9 @@ class VxWorkspace extends View {
     this.restoreOpen();
     this.reloadOpen(cx);
     this.status = new Map();
-    this.remember(ws);
+    if (!ws.auto) {
+      this.remember(ws);
+    }
     // The active repo belongs to the workspace you left.
     if (active()?.root && !rootFor(active().root, ws.roots)) {
       setShared(VxWorkspace.SHARED_ACTIVE, null);
@@ -264,8 +267,26 @@ class VxWorkspace extends View {
     }
   }
 
+  // With no workspace open, the Explorer shows the focused terminal's repo (or folder).
+  followActiveFolder(cx) {
+    const cwd = ctx().focus.cwd;
+    if (!cwd || (this.ws && !this.ws.auto) || cwd === this.autoCwd) {
+      return;
+    }
+    this.autoCwd = cwd;
+    const on = ctx().focus.space?.machine ?? null;
+    cx.spawn(async (cx) => {
+      const top = (await repoTop(this.tops, cwd, on).catch(() => null)) ?? cwd;
+      if (this.autoCwd !== cwd || (this.ws && !this.ws.auto) || this.ws?.dir === top) {
+        return;
+      }
+      this.adopt({ file: null, auto: true, name: baseName(top), dir: top, roots: [{ name: baseName(top), path: top, ...(on ? { on } : {}) }] }, cx);
+    });
+  }
+
   follow(cx) {
     this.followFocus();
+    this.followActiveFolder(cx);
     const context = ctx();
     if (context.source === "root" && active()?.root !== context.root.path) {
       setActive(context.root, "focus");

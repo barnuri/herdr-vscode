@@ -211,10 +211,15 @@ export const explorerMethods = {
   },
 
   restoreOpen() {
+    const saved = localStorage.getItem(this.openStateKey());
     try {
-      this.open = new Set(JSON.parse(localStorage.getItem(this.openStateKey()) ?? "[]"));
+      this.open = new Set(JSON.parse(saved ?? "[]"));
     } catch {
       this.open = new Set();
+    }
+    const roots = this.ws?.roots ?? [];
+    if ((saved === null || this.ws?.auto) && roots.length === 1) {
+      this.open.add(entryKey(roots[0].path, ""));
     }
   },
 

@@ -1,8 +1,10 @@
-# herdr-vx
+# herdr-vscode
 
 A layout that turns Herdr into a VS Code-style workspace: the Files panel is a multi-root Explorer of a `.code-workspace`, Changes is GitLens-style git, CI shows GitLab pipelines and GitHub Actions, Graph is a commit graph, and the tab bar runs package scripts. Every panel follows one **active repo**: the one you pick, else the repo of the focused terminal.
 
-![herdr-vx](preview.png)
+Based on herdr-vx (MIT). No AI features.
+
+![herdr-vscode](preview.png)
 
 ## What you see
 
@@ -10,11 +12,11 @@ Herdr's `main` window, with these changes:
 
 - **Tab bar** (`tabs` block, 42px, `chrome`): tab pills as in Herdr (29px, radius 7, agent icon, spinner while working, a `blocked`/`done` dot, × on the active one), then `+`, then the script control `[pm logo] script ▾ │ ▶` (26px, border `border`, ▶ in `ansi2`), a 1px divider, and on the right edge **Files · Changes · CI · Graph** (26px pills, 12px text; the open panel's on `selected`).
 - **Right panel** (`panel` column, 368px, a `stack`): `files` = vx-workspace, `changes` = vx-changes, `ci` = vx-ci `{panel: true}`.
-  - **Files**: a 36px header (layers icon, workspace name, + add folder, dotfiles, collapse, refresh, ⋯), a 26px filter box, then one 24px row per root: chevron, Material folder icon, name, branch in `dim` on the right, and one 7px dot: `ansi1` failing CI or conflicts, `ansi4` running CI, `ansi3` changes, none when clean. Under an open root, its tree in 22px rows indented 12px, git letters and colours (`ansi2` new, `ansi3` modified, `ansi1` deleted / conflict), a dot on folders holding changes, git-ignored entries in `dim`.
-  - **Changes** (Source Control): header `[repo ▾]` + list/tree, refresh, ⋯ (pull, push, sync, fetch, stash, new branch); a branch pill and `↓n ↑n`; the commit card (message, ✨ Claude message, an `accent` Commit button with ⌄ for Commit & Push / Sync / Amend); groups Merge / Staged / Changes (icon, name, folder in `dim`, +/− blocks, a letter chip; on hover Open File, Discard, Stage); collapsible sections Commits (graph lanes, authors, ref pills, incoming / outgoing), Branches, Remotes, Stashes, Tags, Search & Compare. See [vx-changes/RECIPE.md](vx-changes/RECIPE.md).
+  - **Files**: a 36px header (layers icon, workspace name, + add folder, dotfiles, collapse, refresh, ⋯), a 26px filter box, then one 24px row per root: chevron, vscode-icons folder icon, name, branch in `dim` on the right, and one 7px dot: `ansi1` failing CI or conflicts, `ansi4` running CI, `ansi3` changes, none when clean. Under an open root, its tree in 22px rows indented 12px, git letters and colours (`ansi2` new, `ansi3` modified, `ansi1` deleted / conflict), a dot on folders holding changes, git-ignored entries in `dim`.
+  - **Changes** (Source Control): header `[repo ▾]` + list/tree, refresh, ⋯ (pull, push, sync, fetch, stash, new branch); a branch pill and `↓n ↑n`; the commit card (message, an `accent` Commit button with ⌄ for Commit & Push / Sync / Amend); groups Merge / Staged / Changes (icon, name, folder in `dim`, +/− blocks, a letter chip; on hover Open File, Discard, Stage); collapsible sections Commits (graph lanes, authors, ref pills, incoming / outgoing), Branches, Remotes, Stashes, Tags, Search & Compare. See [vx-changes/RECIPE.md](vx-changes/RECIPE.md).
   - **CI**: header `[repo ▾]`, a GitLab or GitHub badge, run ▶, open-web, refresh; filter chips All / Running / Failed / Passed with counts and a branch toggle; runs as two-line rows (status glyph ✓ ✕ ● ○ ▸ in `ansi2/ansi1/ansi4/dim/ansi5`, commit subject, `#n · ref · trigger · age`); a run opens its jobs grouped by stage.
 - **Centre tabs** (mod panes): file preview (vx-files), diff (vx-changes), Commit Graph (vx-graph). Code rows are 1.55× the terminal font size with line numbers; additions tinted `ansi2`, removals `ansi1` (alpha `1f`); syntax colours: keywords `ansi5`, strings `ansi2`, numbers `ansi1`, types `ansi3`, calls `ansi4`, constants `ansi6`, comments `dim`. Blame adds a 230px column (author · age · summary on the first line of each commit block) and a 4px heat strip (`ansi1` newest → `ansi3` → `ansi2` → `ansi4` → `border` oldest).
-- **Status bar** (`status`, 28px, `chrome`, top border): folder (accent layers icon when it comes from your pick), branch, ↑↓ / sync, changed (`ansi3`), staged (`ansi2`), conflicts (`ansi1`), stashes (`dim`), `clean`; on a Claude Code pane, model · effort and `ctx` / `5h` / `7d` meters (44×4 tracks; `ansi3` at 80%, `ansi1` at 95%).
+- **Status bar** (`status`, 28px, `chrome`, top border): folder (accent layers icon when it comes from your pick), branch, ↑↓ / sync, changed (`ansi3`), staged (`ansi2`), conflicts (`ansi1`), stashes (`dim`), `clean`.
 
 ## How it behaves
 
@@ -28,11 +30,11 @@ Herdr's `main` window, with these changes:
 
 ## Built from
 
+- The vx-code layout (see [vx-code/RECIPE.md](vx-code/RECIPE.md)) adds a Running view (vx-running, [vx-running/RECIPE.md](vx-running/RECIPE.md)) to its side bar.
 - `layouts/vx.json`: Herdr's `main` clone; `tabs` → `vx-tabs`; `panel-body` children `files` (vx-workspace), `changes` (vx-changes), `ci` (vx-ci `{panel: true}`); `status` → vx-status. `layouts/vx.svg` is its picture.
-- `mods/vx-*`: each folder carries a copy of `shared/` (`ws-core.js` context rules and workspace edits, `ws.js`, `git-core.js`, `ci-core.js`, `graph-core.js`, `blame-core.js`, `syntax-core.js`, `icons-core.js`, `jsonc.js`, `ui.js`, `actions.js` confirm-then-run, `tabs.js` one reusable centre tab per space, `repo-picker.js`, `scripts.js`, `icons.js`). `vx-icons` holds `icons/` (1,184 Material SVGs), `icons.json` and `ui/`.
+- `mods/vx-*`: each folder carries a copy of `shared/` (`ws-core.js` context rules and workspace edits, `ws.js`, `git-core.js`, `ci-core.js`, `graph-core.js`, `blame-core.js`, `syntax-core.js`, `icons-core.js`, `jsonc.js`, `ui.js`, `actions.js` confirm-then-run, `tabs.js` one reusable centre tab per space, `repo-picker.js`, `scripts.js`, `icons.js`). `vx-icons` holds `icons/` (1,493 vscode-icons SVGs), `icons.json` and `ui/`.
 - Shared state: `vx.workspace` (written only by vx-workspace), `vx.active`, `vx.changed` (a repo changed: reread), `vx.git`, `vx.ci.summary`, `vx.ws.cmd` / `vx.ws.reply` (popups ask the Explorer to act), `vx.changes.cmd` (Source Control's popups), `vx-files.view`, `vx-changes.view`, `vx-graph.view`, `vx.scripts`.
 - Herdr calls: `exec` (git, glab, gh, sh, ssh -G, open, test), `readTextFile`, `watchFolder` (the active repo only), `openOverlay` / `closeOverlay`, `setShared`, `run` (`tab.new`, `tab.select`, `tab.rename`, `tab.move`, `tab.close`, `pane.focus`, `pane.split`, `layout.select`, `layout.show`, `layout.hide`, `layout.resize`), `pickFolder`, `notify`, `hc send` (insert `@path` into an agent).
-- `claude-plugin/vx-status`: a module hook (`session.start`, `turn.step`, `turn.complete`, `session.measure`) writing `{model, effort, window, meters, at}` to `~/.local/state/vx-status/<HC_TERMINAL_ID>.json`.
 
 ## Watch out
 

@@ -8,7 +8,7 @@ A tab bar for Herdr with the package-script runner built in and Files · Changes
 
 Tab pills as in Herdr (agent icon, spinner, status dot, ×), `+`, then `[pm logo] script ▾ │ ▶`, a divider, and Files · Changes · CI · Graph right-aligned (the open panel highlighted). ▾ opens the script list (vx-scripts): project name, the installed package managers (the detected one ✓), a filter, Recent, every script with its command, ⧉ run beside and ▶ run in a new tab.
 
-Each tab also has its icon (program, or the file's Material icon), a faint context (`repo · branch`, or the file's folder) and a 3px repo-colour mark; preview tabs are italic; pinned tabs are icon-only on the left. ⌄ lists every tab. `props { style: "vscode" }` draws VS Code's flush tabs plus Split Right and ⋯; `props { breadcrumbs: true }` is the breadcrumb strip (root › folders › file).
+Each tab also has its icon (program, or the file's vscode-icons icon), a faint context (`repo · branch`, or the file's folder) and a 3px repo-colour mark; preview tabs are italic; pinned tabs are icon-only on the left. ⌄ lists every tab. `props { style: "vscode" }` draws VS Code's flush tabs plus Split Right and ⋯; `props { breadcrumbs: true }` is the breadcrumb strip (root › folders › file).
 
 ## How it behaves
 

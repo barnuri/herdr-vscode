@@ -1,6 +1,6 @@
 # vx-status
 
-A bottom bar for Herdr: the repo and branch you're working in, ahead / behind with fetch, pull and push (each confirmed), changed / staged / conflicts / stashes, and, with its Claude Code plugin, the session's model, effort and context / usage meters.
+A bottom bar for Herdr: the repo and branch you're working in, ahead / behind with fetch, pull and push (each confirmed), and changed / staged / conflicts / stashes.
 
 ![vx-status](preview.png)
 
@@ -8,11 +8,11 @@ A bottom bar for Herdr: the repo and branch you're working in, ahead / behind wi
 
 `props { style: "vscode" }` (the vx-code layout): `canvas`, no border, 12px text and 14px icons, a remote glyph first, `✕ errors ⚠ warnings` (opens Problems) and the listening-port count (opens Ports) after the repo chips, and on the right the repo's last pipeline (CI icon in its state colour + `passed` / `failed` / …) and the workspace name.
 
-Default: 28px, `chrome`, a top border: folder (an accent layers icon when it's the repo you picked rather than the terminal's), branch (click copies), ↑↓ (menu: Push…, Pull… `--ff-only`, Fetch…), ✎ changed `ansi3`, + staged `ansi2`, ⚠ conflicts `ansi1`, ▣ stashes `dim`, `clean`. On a Claude Code pane, right side: model · effort and `ctx` / `5h` / `7d` meters (44×4; `ansi3` at 80%, `ansi1` at 95%).
+Default: 28px, `chrome`, a top border: folder (an accent layers icon when it's the repo you picked rather than the terminal's), branch (click copies), ↑↓ (menu: Push…, Pull… `--ff-only`, Fetch…), ✎ changed `ansi3`, + staged `ansi2`, ⚠ conflicts `ansi1`, ▣ stashes `dim`, `clean`.
 
 ## How it behaves
 
-Follows the active repo (vx-workspace) or the focused terminal; rereads on change and every 8 s. Fetch / pull / push run only after their confirm dialog. Changed and conflicts open the Changes panel. The Claude chips read `~/.local/state/vx-status/<terminal>.json`, written by the `vx-status` Claude Code plugin (in this repo: `claude plugin marketplace add sardar099/herdr-vx && claude plugin install vx-status@vx`).
+Follows the active repo (vx-workspace) or the focused terminal; rereads on change and every 8 s. Fetch / pull / push run only after their confirm dialog. Changed and conflicts open the Changes panel.
 
 ## Built from
 
@@ -30,5 +30,4 @@ Every vx mod needs `vx-icons` next to it (icons go blank without it). The mods s
 
 - In a repo the bar shows branch, ↑↓ and change counts.
 - Push asks first.
-- With the plugin, a Claude pane shows its model and meters after one reply.
 - `herdr-app check` passes for every mod in this folder.

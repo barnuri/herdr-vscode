@@ -4,7 +4,7 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs"
   },
-  "name": "herdr-vx",
+  "name": "herdr-vscode",
   "license": "MIT",
-  "description": "VS Code-style workspace mods for the Herdr desktop app"
+  "description": "VS Code-style workspace mods for the Herdr desktop app, based on herdr-vx"
 }

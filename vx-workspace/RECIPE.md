@@ -8,8 +8,8 @@ A VS Code-style Explorer for Herdr's Files panel: every folder of a `*.code-work
 
 - **Header** (36px): workspace name, + (Add Folder…), dotfiles toggle, collapse, refresh, ⋯ (Add Folder…, New Workspace…, Open Workspace…, Save Workspace As…, Reveal Workspace File, Close Workspace, Recent).
 - **Filter box** (26px): typing lists matching files of every root, grouped by root (300 at most).
-- **One 24px row per root**: chevron, Material folder icon, name, branch in `dim` on the right, and one 7px dot: `ansi1` failing CI or conflicts, `ansi4` running CI, `ansi3` changes; none when clean. Hover shows path, upstream, ↑↓, counts, pipeline.
-- **The tree** under an open root: 22px rows indented 12px, Material icons, git letters (`A` `ansi2`, `M` `ansi3`, `D`/`U` `ansi1`), a dot on folders holding changes, git-ignored entries in `dim`.
+- **One 24px row per root**: chevron, vscode-icons folder icon, name, branch in `dim` on the right, and one 7px dot: `ansi1` failing CI or conflicts, `ansi4` running CI, `ansi3` changes; none when clean. Hover shows path, upstream, ↑↓, counts, pipeline.
+- **The tree** under an open root: 22px rows indented 12px, vscode-icons, git letters (`A` `ansi2`, `M` `ansi3`, `D`/`U` `ansi1`), a dot on folders holding changes, git-ignored entries in `dim`.
 - **Preview tab** (vx-files, one reused centre tab per space): code as rows with line numbers and syntax colours, a bar on lines changed since HEAD; Markdown rendered (Code toggles back); images. Blame adds a 230px column (author · age · summary per commit block) and a 4px heat strip; History and Line history open a 320px drawer of commits.
 
 ## How it behaves

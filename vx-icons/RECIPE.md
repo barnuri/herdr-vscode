@@ -1,6 +1,6 @@
 # vx-icons
 
-The icon pack every vx mod draws from: the Material Icon Theme's file and folder icons (VS Code's picks by name, extension and path, light-theme variants, open folders) and the vx UI icons.
+The icon pack every vx mod draws from: the [vscode-icons](https://github.com/vscode-icons/vscode-icons) file and folder icons (v13.0.0: picks by file name, extension and folder name, light-theme variants, open folders) and the vx UI icons.
 
 ![vx-icons](preview.png)
 
@@ -14,7 +14,7 @@ Other mods read `mods/vx-icons/icons.json` (name / extension / folder tables) an
 
 ## Built from
 
-`mods/vx-icons`: `icons/` (1,184 SVGs from Material Icon Theme, MIT, licence in `LICENSE-material-icon-theme.txt`), `icons.json`, `ui/` (36 UI icons), a sample `main.js`. Install: copy `mods/vx-icons` into `~/.config/herdr-app/mods/`. The folder name must stay `vx-icons`.
+`mods/vx-icons`: `icons/` (1,493 SVGs from vscode-icons v13.0.0, MIT, licence in `LICENSE-vscode-icons.txt`; ids like `f_typescript`, `fd_src`, `fd_src_open`, `folder`, `folder_open`, `root_folder`), `icons.json`, `ui/` (36 UI icons), a sample `main.js`. Rebuild with `node tools/build-icons.mjs <unpacked vscode-icons .vsix extension folder> <vscode-icons src/iconsManifest/languages.ts>`: it skips SVGs with active content (scripts, event handlers, `foreignObject`) and refuses a non-empty `icons/` folder. Install: copy `mods/vx-icons` into `~/.config/herdr-app/mods/`. The folder name must stay `vx-icons`.
 
 ## Watch out
 
