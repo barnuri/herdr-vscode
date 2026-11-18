@@ -1,10 +1,10 @@
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
-import { theme, layout, run, hc, exec, terminals, shared, setShared, nextCommand, checking, props, home } from "herdr";
+import { v_flex, h_flex, Input, InputState } from "gpui-base";
+import { theme, layout, run, hc, exec, terminals, shared, setShared, nextCommand, checking, props, home, openOverlay, closeOverlay } from "herdr";
 import { ctx, baseName, workspace, rootFor, setActive, repoTop } from "./ws.js";
 import { findProject, pmOf } from "./scripts.js";
 import { showInViewer } from "./tabs.js";
-import { withContent, findNode } from "./layout-core.js";
+import { withContent, findNode, withChildAt } from "./layout-core.js";
 import { parsePorts, workspaceProblems, pickChecks, parseCheckOutput, countProblems } from "./panel-core.js";
 import { askConfirm, confirmMethods } from "./actions.js";
 import { TEXT, Icon, ConfirmView, FileIcon, RootIcon } from "./ui.js";
@@ -25,6 +25,17 @@ export default class HerdrVscodePanel extends View {
   static PORTS_POLL_MS = 3000;
   static PROBLEMS_REDRAW_MS = 1500;
   static TIDY_MS = 1000;
+  static LIST_REDRAW_MS = 1000;
+  static SPLIT_BLOCK = "term-split";
+  static LIST_ROW_PX = 22;
+  static LIST_BLOCK = "term-list";
+  static TERM_ROW = "term-row";
+  static LIST_WIDTH = 170;
+  static LIST_ICON_ONLY_PX = 90;
+  static NAMES_KEY = "herdr-vscode.panel.names";
+  static MENU_WIDTH = 200;
+  static MENU_ROW_PX = 26;
+  static MENU_PAD_PX = 8;
   static PORT_COUNT_MS = 10000;
   static CHECK_TIMEOUT_MS = 600000;
   static CHECK_NOTIFY_MS = 4000;
@@ -96,6 +107,18 @@ export default class HerdrVscodePanel extends View {
       this.confirmFocus.focus();
       return;
     }
+    if (initProps.shellMenu) {
+      this.shellMenu = initProps.shellMenu;
+      this.menuOverlay = initProps.overlay;
+      return;
+    }
+    if (initProps.list) {
+      this.listView = true;
+      if (!checking()) {
+        cx.timer.every(HerdrVscodePanel.LIST_REDRAW_MS, (cx) => cx.notify());
+      }
+      return;
+    }
     if (initProps.view || initProps.empty) {
       this.initView(initProps.view ?? HerdrVscodePanel.EMPTY, cx);
       return;
@@ -160,13 +183,22 @@ export default class HerdrVscodePanel extends View {
     if (!term) {
       return;
     }
+    let next = tree;
     const content = this.want(state);
-    if (JSON.stringify(term.content) === JSON.stringify(content)) {
-      return;
+    if (JSON.stringify(term.content) !== JSON.stringify(content)) {
+      next = withContent(next, "term", content) ?? next;
     }
-    const next = withContent(tree, "term", content);
-    if (next) {
+    // The split shows a second shell beside the first, like VS Code's split terminal.
+    const splitNode = findNode(next, HerdrVscodePanel.SPLIT_BLOCK);
+    const splitShown = state.view === HerdrVscodePanel.TERMINAL && Boolean(state.split) && state.split !== state.shown;
+    if (splitNode && splitShown && JSON.stringify(splitNode.content) !== JSON.stringify({ terminal: state.split })) {
+      next = withContent(next, HerdrVscodePanel.SPLIT_BLOCK, { terminal: state.split }) ?? next;
+    }
+    if (next !== tree) {
       run("layout.set", { layout: next });
+    }
+    if (splitNode && Boolean(splitNode.hidden) === splitShown) {
+      run(splitShown ? "layout.show" : "layout.hide", { id: HerdrVscodePanel.SPLIT_BLOCK });
     }
   }
 
@@ -206,13 +238,16 @@ export default class HerdrVscodePanel extends View {
       }
     }
     const shown = live.has(state.shown) ? state.shown : list[list.length - 1] ?? null;
-    const next = { ...state, shown, list };
+    const split = live.has(state.split) ? state.split : null;
+    const next = { ...state, shown, list, split };
     const onTerminal = state.view === HerdrVscodePanel.TERMINAL;
     // The activity bar and status bar switch the panel tab too: remember the user's last pick.
     if (state.view !== getSetting("panel", "view", HerdrVscodePanel.TERMINAL)) {
       setSetting("panel", "view", state.view);
     }
-    if (list.join() !== state.list.join() || shown !== state.shown) {
+    this.rememberPanel(bottom, visible);
+    this.arrangeList(state);
+    if (list.join() !== state.list.join() || shown !== state.shown || split !== (state.split ?? null)) {
       setShared(HerdrVscodePanel.STATE_KEY, next);
       if (state.list.length && !list.length && visible && onTerminal) {
         run("layout.hide", { id: "bottom" });
@@ -225,6 +260,61 @@ export default class HerdrVscodePanel extends View {
       this.autoAdd(cx);
     }
     cx.notify();
+  }
+
+  // settings.json panel.visible and panel.height: restored once at start, then kept up to date.
+  rememberPanel(bottom, visible) {
+    if (!bottom) {
+      return;
+    }
+    if (!this.restored) {
+      this.restored = true;
+      const height = Number(getSetting("panel", "height", 0));
+      if (height > 0 && height !== bottom.size?.px) {
+        run("layout.resize", { id: "bottom", px: height });
+      }
+      const wanted = getSetting("panel", "visible", true) !== false;
+      if (wanted !== visible) {
+        run(wanted ? "layout.show" : "layout.hide", { id: "bottom" });
+      }
+      return;
+    }
+    if (visible !== getSetting("panel", "visible", true)) {
+      setSetting("panel", "visible", visible);
+    }
+    const height = bottom.size?.px;
+    if (visible && height && !HerdrVscodePanel.isMaximized(bottom) && height !== getSetting("panel", "height", HerdrVscodePanel.SIZE)) {
+      setSetting("panel", "height", height);
+    }
+  }
+
+  // VS Code's terminal tabs list: shown with more than one shell, on the side settings.json
+  // terminal."tabs.location" names ("left" or "right"), its width kept in "tabs.width".
+  arrangeList(state) {
+    const tree = layout();
+    const node = findNode(tree, HerdrVscodePanel.LIST_BLOCK);
+    if (!node) {
+      return;
+    }
+    const side = getSetting("terminal", "tabs.location", "left") === "right" ? "right" : "left";
+    const moved = withChildAt(tree, HerdrVscodePanel.TERM_ROW, HerdrVscodePanel.LIST_BLOCK, side);
+    if (moved) {
+      run("layout.set", { layout: moved });
+    }
+    const many = state.view === HerdrVscodePanel.TERMINAL && HerdrVscodePanel.listedShells(state, HerdrVscodePanel.liveTerminals()).length > 1;
+    if (Boolean(node.hidden) === many) {
+      run(many ? "layout.show" : "layout.hide", { id: HerdrVscodePanel.LIST_BLOCK });
+    }
+    const width = node.size?.px;
+    if (!this.listRestored) {
+      this.listRestored = true;
+      const saved = Number(getSetting("terminal", "tabs.width", 0));
+      if (saved > 0 && saved !== width) {
+        run("layout.resize", { id: HerdrVscodePanel.LIST_BLOCK, px: saved });
+      }
+    } else if (many && width && width !== getSetting("terminal", "tabs.width", HerdrVscodePanel.LIST_WIDTH)) {
+      setSetting("terminal", "tabs.width", width);
+    }
   }
 
   autoAdd(cx) {
@@ -269,19 +359,30 @@ export default class HerdrVscodePanel extends View {
     run("pane.focus", { terminal: address });
   }
 
+  async split(cx) {
+    const before = HerdrVscodePanel.state().shown;
+    await this.add(cx);
+    const state = HerdrVscodePanel.state();
+    if (before && state.shown !== before) {
+      this.commit({ ...state, shown: before, split: state.shown });
+    }
+  }
+
   show(address) {
     this.commit({ ...HerdrVscodePanel.state(), view: HerdrVscodePanel.TERMINAL, shown: address });
     run("pane.focus", { terminal: address });
   }
 
-  kill() {
+  kill(address = HerdrVscodePanel.state().shown) {
     const state = HerdrVscodePanel.state();
-    if (!state.shown) {
+    if (!address) {
       return;
     }
-    run("terminal.kill", { terminal: state.shown });
-    const list = state.list.filter((address) => address !== state.shown);
-    const next = { ...state, shown: list[list.length - 1] ?? null, list };
+    run("terminal.kill", { terminal: address });
+    const list = state.list.filter((other) => other !== address);
+    const split = state.split === address ? null : state.split ?? null;
+    const shown = state.shown === address ? split ?? list[list.length - 1] ?? null : state.shown;
+    const next = { ...state, shown, list, split: split === shown ? null : split };
     this.commit(next);
     if (!next.shown) {
       run("layout.hide", { id: "bottom" });
@@ -543,6 +644,104 @@ export default class HerdrVscodePanel extends View {
     return body.child(v_flex().id("vp-problem-rows").flex_1().min_h(0).overflow_y_scrollbar().py(4).children(rows));
   }
 
+  // VS Code's terminal tabs list, right of the terminal: the panel's shells for the active folder
+  // (every shell when none is there), with kill on hover.
+  static listedShells(state, live) {
+    const root = ctx().root?.path ?? null;
+    const shells = state.list.filter((address) => live.has(address));
+    const inRoot = root ? shells.filter((address) => {
+      const cwd = live.get(address)?.cwd ?? "";
+      return cwd === root || cwd.startsWith(`${root}/`);
+    }) : [];
+    return inRoot.length ? inRoot : shells;
+  }
+
+  listRow(t, address, state, live) {
+    const terminal = live.get(address);
+    const selected = address === state.shown || address === state.split;
+    const where = terminal?.cwd ? (terminal.cwd === home() ? "~" : baseName(terminal.cwd)) : "";
+    const hot = this.hotShell === address;
+    const name = (shared(HerdrVscodePanel.NAMES_KEY) ?? {})[address] ?? terminal?.agent ?? "zsh";
+    const iconOnly = (this.listWidth ?? HerdrVscodePanel.LIST_WIDTH) < HerdrVscodePanel.LIST_ICON_ONLY_PX;
+    return h_flex().id(`vp-l-${address}`).h(HerdrVscodePanel.LIST_ROW_PX).flex_none().pl(8).pr(4).gap(6).items_center().cursor_pointer()
+      .bg(selected ? t.selected : hot ? t.hover : HerdrVscodePanel.TRANSPARENT).text_color(selected ? t.foreground : t.muted)
+      .tooltip(terminal?.cwd ?? address)
+      .on_hover((on, cx) => {
+        this.hotShell = on ? address : this.hotShell === address ? null : this.hotShell;
+        cx.notify();
+      })
+      .on_click((_e, cx) => {
+        this.show(address);
+        cx.notify();
+      })
+      .on_mouse_down("right", (_e, cx) => {
+        cx.stop_propagation();
+        const height = 3 * HerdrVscodePanel.MENU_ROW_PX + HerdrVscodePanel.MENU_PAD_PX * 2;
+        openOverlay({ mod: HerdrVscodePanel.MOD, kind: "popup", width: HerdrVscodePanel.MENU_WIDTH, height, props: { shellMenu: { address, name } } });
+      })
+      .when(iconOnly, (el) => el.justify_center().pl(0).pr(0))
+      .child(Icon(address === state.split ? "split" : "terminal", 14))
+      .when(!iconOnly, (el) => el.child(div().flex_1().min_w(0).truncate().child(`${name}${where ? ` · ${where}` : ""}`)))
+      .when(hot && !iconOnly, (el) => el.child(this.headerButton(t, `kill-${address}`, "trash", "Kill Terminal", () => this.kill(address))));
+  }
+
+  renderList(t) {
+    const state = HerdrVscodePanel.state();
+    const live = HerdrVscodePanel.liveTerminals();
+    const left = getSetting("terminal", "tabs.location", "left") !== "right";
+    return v_flex().id("herdr-vscode-panel-list").size_full().py(2).when(left, (el) => el.border_r(1)).when(!left, (el) => el.border_l(1))
+      .border_color(t.border).bg(t.background).text_size(TEXT.small).overflow_y_scrollbar()
+      .on_size_change((size, cx) => {
+        if (size.width !== this.listWidth) {
+          this.listWidth = size.width;
+          cx.notify();
+        }
+      })
+      .children(HerdrVscodePanel.listedShells(state, live).map((address) => this.listRow(t, address, state, live)));
+  }
+
+  // Right-click on a terminal in the list: Rename, Split, Kill. Names are runtime (shells are).
+  renderShellMenu(t) {
+    const { address, name } = this.shellMenu;
+    const done = () => closeOverlay(this.menuOverlay);
+    if (this.renaming) {
+      return v_flex().size_full().p(HerdrVscodePanel.MENU_PAD_PX).bg(t.popover ?? t.surface).text_size(TEXT.small)
+        .on_key_down((event, cx) => {
+          if (event.key === "enter") {
+            const value = this.renaming.value().trim();
+            setShared(HerdrVscodePanel.NAMES_KEY, { ...(shared(HerdrVscodePanel.NAMES_KEY) ?? {}), [address]: value || undefined });
+            done();
+          } else if (event.key === "escape") {
+            done();
+          }
+          cx.stop_propagation();
+        })
+        .child(Input.new(this.renaming).id("vp-rename"));
+    }
+    const item = (id, icon, label, action) => h_flex().id(`vp-m-${id}`).h(HerdrVscodePanel.MENU_ROW_PX).px(8).gap(8).items_center().rounded(4).cursor_pointer()
+      .hover((style) => style.bg(t.hover)).on_click((_e, cx) => {
+        action(cx);
+        cx.notify();
+      })
+      .child(Icon(icon, 14)).child(label);
+    return v_flex().size_full().p(HerdrVscodePanel.MENU_PAD_PX).bg(t.popover ?? t.surface).text_size(TEXT.small).text_color(t.foreground)
+      .child(item("rename", "pencil", "Rename…", () => {
+        this.renaming = InputState.new({ placeholder: name, value: name });
+        this.renaming.focus();
+      }))
+      .child(item("split", "split", "Split Terminal", (cx) => {
+        this.show(address);
+        cx.spawn(async (cx) => {
+          await this.split(cx);
+          done();
+        });
+      }))
+      .child(item("kill", "trash", "Kill Terminal", () => {
+        this.kill(address);
+        done();
+      }));
+  }
+
   renderEmpty(t) {
     return v_flex().size_full().items_center().justify_center().gap(6).bg(t.background).text_color(t.dim).text_size(TEXT.small)
       .child(Icon("terminal", 22)).child("No terminal yet. Press ⌘J, or + above.");
@@ -577,28 +776,19 @@ export default class HerdrVscodePanel extends View {
         .bg(t.raised).text_size(TEXT.tiny).text_color(t.foreground).child(String(counts[id]))));
   }
 
-  shellTab(t, address, index, state, live) {
-    const selected = address === state.shown;
-    return div().id(`vp-t-${address}`).h(20).px(6).flex_none().flex().items_center().rounded(4).cursor_pointer()
-      .bg(selected ? t.selected : HerdrVscodePanel.TRANSPARENT).text_color(selected ? t.foreground : t.muted).hover((style) => style.bg(t.hover))
-      .tooltip(live.get(address)?.cwd ?? address).on_mouse_down("left", HerdrVscodePanel.stopPropagation)
-      .on_click((_e, cx) => {
-        this.show(address);
-        cx.notify();
-      })
-      .child(`${index + 1}`);
-  }
-
   terminalControls(t, el, state, live) {
     const current = live.get(state.shown);
     const shells = state.list.filter((address) => live.has(address));
     const where = current?.cwd ? (current.cwd === home() ? "~" : baseName(current.cwd)) : "";
     return el
-      .when(shells.length > 1, (row) => row.children(shells.map((address, index) => this.shellTab(t, address, index, state, live))))
       .when(Boolean(current), (row) => row.child(h_flex().h(20).px(6).gap(5).flex_none().items_center().text_color(t.muted).tooltip(current?.cwd ?? "")
-        .child(Icon("terminal", 12)).child(div().max_w(220).truncate().child(`${current?.agent ?? "shell"} - ${where}`))))
+        .child(Icon("terminal", 12)).child(div().max_w(220).truncate().child(`${(shared(HerdrVscodePanel.NAMES_KEY) ?? {})[state.shown] ?? current?.agent ?? "zsh"}${where ? ` - ${where}` : ""}`))))
       .child(this.headerButton(t, "new", "plus", "New Terminal in the context repo", (cx) => cx.spawn(async (cx) => {
         await this.add(cx);
+        cx.notify();
+      })))
+      .child(this.headerButton(t, "split", "split", "Split Terminal", (cx) => cx.spawn(async (cx) => {
+        await this.split(cx);
         cx.notify();
       })))
       .child(this.headerButton(t, "kill", "trash", "Kill Terminal", () => this.kill()));
@@ -609,6 +799,12 @@ export default class HerdrVscodePanel extends View {
       return ConfirmView(this);
     }
     const t = theme();
+    if (this.listView) {
+      return this.renderList(t);
+    }
+    if (this.shellMenu) {
+      return this.renderShellMenu(t);
+    }
     if (this.view === HerdrVscodePanel.PORTS) {
       return this.renderPorts(t);
     }

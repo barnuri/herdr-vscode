@@ -49,6 +49,10 @@ Every user-facing setting, preference or toggle is stored with `shared/settings.
 | `ci.filter` | `"all"` | CI / CD: run filter |
 | `ci.mine` | `true` | CI / CD: only my runs |
 | `panel.view` | `"terminal"` | Bottom panel tab: `"problems"`, `"terminal"` or `"ports"` |
+| `panel.visible` | `true` | Bottom panel shown (⌘J / ⌃` toggle it) |
+| `panel.height` | `260` | Bottom panel height in px (drag its top edge) |
+| `terminal.tabs.location` | `"left"` | Side of the panel's terminal list (shown with 2+ terminals): `"left"` or `"right"` |
+| `terminal.tabs.width` | `170` | Width of that list in px (drag its edge; narrow shows icons only) |
 | `pending.auditScript` | `""` (bundled script) | Pending Repos audit script; falls back to its mod.json `settings` |
 | `pending.root` | `""` (`~/code`) | Pending Repos folder to scan; falls back to its mod.json `settings` |
 

@@ -198,7 +198,7 @@
             {
               "id": "editor",
               "type": "column",
-              "resizable": false,
+              "resizable": true,
               "background": "background",
               "radius": 12,
               "border": {
@@ -280,8 +280,8 @@
                 "px": 260
               },
               "min": 100,
-              "hidden": true,
-              "resizable": false,
+              "hidden": false,
+              "resizable": true,
               "background": "background",
               "radius": 12,
               "border": {
@@ -300,14 +300,47 @@
                   }
                 },
                 {
-                  "id": "term",
-                  "type": "block",
-                  "content": {
-                    "mod": "herdr-vscode-panel",
-                    "props": {
-                      "empty": true
+                  "id": "term-row",
+                  "type": "row",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "id": "term",
+                      "type": "block",
+                      "content": {
+                        "mod": "herdr-vscode-panel",
+                        "props": {
+                          "empty": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "term-split",
+                      "type": "block",
+                      "hidden": true,
+                      "content": {
+                        "mod": "herdr-vscode-panel",
+                        "props": {
+                          "empty": true
+                        }
+                      },
+                      "min": 80
+                    },
+                    {
+                      "id": "term-list",
+                      "type": "block",
+                      "size": {
+                        "px": 170
+                      },
+                      "min": 110,
+                      "content": {
+                        "mod": "herdr-vscode-panel",
+                        "props": {
+                          "list": true
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
               ],
               "padding": 4

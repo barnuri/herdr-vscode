@@ -31,3 +31,13 @@ test("tree guides: the selected folder's guide is active for rows inside it", ()
   assert.equal(activeGuideLevel("src/ab.js", "src/a", 2), null);
   assert.equal(activeGuideLevel("src/a/b.js", null, 2), null);
 });
+
+import { withChildAt } from "../shared/layout-core.js";
+
+test("withChildAt: moves the terminal list left or right, null when already there", () => {
+  const tree = { id: "root", children: [{ id: "row", children: [{ id: "term" }, { id: "split" }, { id: "list" }] }] };
+  assert.deepEqual(withChildAt(tree, "row", "list", "left").children[0].children.map((c) => c.id), ["list", "term", "split"]);
+  assert.equal(withChildAt(tree, "row", "list", "right"), null);
+  assert.equal(withChildAt(tree, "row", "nope", "left"), null);
+  assert.deepEqual(tree.children[0].children.map((c) => c.id), ["term", "split", "list"]);
+});
