@@ -3,15 +3,17 @@ import { v_flex, h_flex, Textarea } from "gpui-base";
 import { theme, shared, exec } from "herdr";
 import { ctx, contextKey, git, repoTop, changedAt, bump, baseName } from "./ws.js";
 import { parseStatus, parseNumstat } from "./git-core.js";
-import { primaryAction, discardPlan, statBlocks, subjectInfo } from "./scm-core.js";
-import { TEXT, Icon, IconButton, FileIcon, Message, markColor, tint, SPIN_MS } from "./ui.js";
+import { primaryAction, discardPlan, subjectInfo } from "./scm-core.js";
+import { TEXT, Icon, IconButton, FileIcon, Message, tint, SPIN_MS } from "./ui.js";
+import { isLight } from "./icons-core.js";
+import { workspace } from "./ws.js";
 import { showInViewer } from "./tabs.js";
 import { RepoButton } from "./repo-picker.js";
 import { askConfirm, runAction } from "./actions.js";
 import { openScmMenu, openScmAsk } from "./scm-popups.js";
 import { toast, logError } from "./log.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
-import { withTreeIndent, twistieSlot } from "./tree-ui.js";
+import { withTreeIndent, twistieSlot, treePadding } from "./tree-ui.js";
 
 const MOD = "herdr-vscode-changes";
 const HISTORY_PART = "history";
@@ -31,11 +33,20 @@ const COMMIT = "commit";
 const COMMIT_ALL = "commitAll";
 const SHOWN_FILES_LIMIT = 1000;
 const INDEX_BATCH = 200;
-const ROW_HEIGHT = 24;
+const ROW_HEIGHT = 22;
+const GROUP_HEIGHT = 22;
+const GRAPH_GROUP = "graph";
+const COMMITS_SECTION = "commits";
+// VS Code's gitDecoration colours (Dark Modern, Light Modern).
+const DECORATION = {
+  dark: { M: "#E2C08D", A: "#73C991", U: "#73C991", R: "#73C991", C: "#73C991", D: "#C74E39", conflict: "#E4676B" },
+  light: { M: "#895503", A: "#587C0C", U: "#587C0C", R: "#587C0C", C: "#587C0C", D: "#AD0707", conflict: "#AD0707" },
+};
+const BADGE = { dark: { bg: "#616161", fg: "#F8F8F8" }, light: { bg: "#CCCCCC", fg: "#3B3B3B" } };
+const DISABLED_BUTTON_ALPHA = "80";
 const WRITE_TIMEOUT_MS = 120000;
 const SUCCESS_TIMEOUT_MS = 3000;
 const SHORT_SHA = 8;
-const BRANCH_SHA = 7;
 const COMMIT_MENU_WIDTH = 250;
 const ID_RADIX = 36;
 const ID_SUFFIX_START = 2;
@@ -47,6 +58,9 @@ const NUMSTAT_ARGS = ["--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-
 const REMOTE_COMMANDS = new Set(["fetch", "pull", "push", "sync", "publish"]);
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+const tone = (colors) => (isLight(colors.background) ? "light" : "dark");
+const decorationColor = (colors, letter, conflict) => DECORATION[tone(colors)][conflict ? "conflict" : letter] ?? colors.foreground;
 
 const commandFailure = (result) => new Error((result.stderr || result.stdout).trim());
 
@@ -181,6 +195,7 @@ export const panelMethods = {
     this.on = context.on;
     this.source = context.source;
     this.branch = parsed.detached ? null : parsed.branch;
+    this.syncPlaceholder();
     this.detached = parsed.detached;
     this.upstream = parsed.upstream;
     this.ahead = parsed.ahead;
@@ -290,6 +305,7 @@ export const panelMethods = {
       case "stashPush": return this.stashPush(command, cx);
       case "branchAsk": return openScmAsk(this.uid, { kind: "branch", from: this.branch ?? this.head?.slice(0, SHORT_SHA) });
       case "createBranch": return this.createBranch(command, cx);
+      case "checkout": return this.branchMenu();
       default: return this.runSectionCmd(command, cx);
     }
   },
@@ -595,6 +611,13 @@ export const panelMethods = {
     cx.notify();
   },
 
+  // A group's "Open Changes": the diff of its first file (the viewer shows one diff per space).
+  openAll(files, scope) {
+    if (files[0]) {
+      this.openDiff(files[0], scope);
+    }
+  },
+
   openDiff(file, scope) {
     showInViewer(MOD, { root: this.root, on: this.on ?? null, path: file.path, scope, untracked: file.untracked }, baseName(file.path));
   },
@@ -642,6 +665,7 @@ export const panelMethods = {
       { id: "stash", icon: "archive", color: colors.ansi5, label: "Stash Changes…", cmd: { cmd: "stashAsk" }, disabled: !this.files.length },
       { id: "stash-staged", icon: "archive", color: colors.ansi5, label: "Stash Staged…", cmd: { cmd: "stashAsk", staged: true }, disabled: !this.groups().staged.length },
       { header: "Branch", id: "h3" },
+      { id: "checkout", icon: "branch", color: colors.ansi2, label: "Checkout to…", sub: this.branch ?? "", cmd: { cmd: "checkout" } },
       { id: "branch", icon: "branch-plus", color: colors.ansi2, label: "New Branch…", cmd: { cmd: "branchAsk" } },
       { id: "graph", icon: "pipeline", color: colors.accent, label: "Open Commit Graph", cmd: { cmd: "graph" } },
       { sep: true, id: "s1" },
@@ -681,16 +705,11 @@ export const panelMethods = {
       .bg(tint(color, "26")).text_size(TEXT.tiny).font_medium().text_color(color).child(String(text));
   },
 
-  blockColor(colors, block) {
-    if (block === "+") {
-      return colors.ansi2;
-    }
-    return block === "-" ? colors.ansi1 : tint(colors.dim, "40");
-  },
-
-  blocks(colors, stat) {
-    return h_flex().flex_none().gap(1).children(statBlocks(stat.add, stat.del).map((block) =>
-      div().size(6).rounded(1).bg(this.blockColor(colors, block))));
+  // VS Code's count badge: grey, rounded, right-aligned.
+  countBadge(colors, count) {
+    const badge = BADGE[tone(colors)];
+    return div().flex_none().h(18).min_w(18).px(6).flex().items_center().justify_center().rounded(9)
+      .bg(badge.bg).text_size(TEXT.caption).text_color(badge.fg).child(String(count));
   },
 
   fileTooltip(file, stat) {
@@ -727,8 +746,8 @@ export const panelMethods = {
 
   fileRow(colors, file, scope, depth = 0) {
     const stat = scope === STAGED ? this.stats[0][file.path] : this.stats[1][file.path];
-    const letter = scope === STAGED ? stagedLetter(file) : unstagedLetter(file);
-    const color = file.conflict ? colors.ansi1 : markColor(letter === "U" ? "A" : letter, colors);
+    const letter = file.conflict ? "C" : scope === STAGED ? stagedLetter(file) : unstagedLetter(file);
+    const color = decorationColor(colors, letter, file.conflict);
     const slash = file.path.lastIndexOf("/");
     const name = file.path.slice(slash + 1);
     const dir = this.view === VIEW_FLAT && slash > 0 ? file.path.slice(0, slash) : "";
@@ -736,7 +755,7 @@ export const panelMethods = {
     const selected = this.selected === key;
     const hot = this.hot === key;
     const deleted = letter === "D";
-    const row = h_flex().id(`c-${key}`).h(ROW_HEIGHT).flex_none().mx(4).pr(4).gap(6).items_center().rounded(5)
+    const row = h_flex().id(`c-${key}`).h(ROW_HEIGHT).flex_none().pr(12).gap(6).items_center()
       .bg(selected ? colors.selected : hot ? colors.hover : TRANSPARENT).cursor_pointer().text_size(TEXT.body)
       .tooltip(this.fileTooltip(file, stat))
       .on_click((event, cx) => this.clickFile(event, file, scope, key, deleted, cx))
@@ -746,28 +765,24 @@ export const panelMethods = {
         this.fileMenu(file, scope);
         cx.notify();
       })
-      .when(this.view === VIEW_TREE, (el) => el.child(twistieSlot(null)))
-      .when(this.view !== VIEW_TREE, (el) => el.child(div().w(2).h(14).flex_none().rounded(1).bg(selected ? colors.accent : TRANSPARENT)))
+      .child(twistieSlot(null))
       .child(FileIcon(this.icons, file.path, { size: 16 }))
-      .child(div().flex_shrink(1).min_w(40).max_w(200).truncate().text_color(color).when(deleted, (el) => el.line_through()).child(name))
-      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(file.conflict ? file.conflictKind : dir));
+      .child(div().flex_shrink(1).min_w(30).truncate().text_color(color).when(deleted, (el) => el.line_through()).child(name))
+      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.small).text_color(colors.dim).child(file.conflict ? file.conflictKind : dir));
     if (hot) {
       row.children(this.fileRowActions(file, scope, key, deleted));
-    } else if (stat && !stat.binary && !file.conflict && (stat.add || stat.del)) {
-      row.child(this.blocks(colors, stat));
     }
-    row.child(div().w(16).h(16).flex_none().flex().items_center().justify_center().rounded(4).bg(tint(color, "22"))
-      .text_size(TEXT.tiny).font_semibold().text_color(color).child(letter));
-    return this.hoverable(withTreeIndent(row, colors, { depth, height: ROW_HEIGHT, hovered: this.treeHovered }), key);
+    row.child(div().w(12).flex_none().text_right().text_size(TEXT.small).text_color(color).child(letter));
+    return this.hoverable(withTreeIndent(row, colors, { depth: depth + 1, height: ROW_HEIGHT, firstLevel: 1, hovered: this.treeHovered }), key);
   },
 
   folderRow(colors, id, label, depth, open) {
-    const row = h_flex().id(`d-${id}`).h(ROW_HEIGHT).flex_none().mx(4).gap(4).items_center().rounded(5).cursor_pointer().hover((style) => style.bg(colors.hover))
-      .text_size(TEXT.body).text_color(colors.muted).on_click((_e, cx) => this.toggleGroup(id, cx))
+    const row = h_flex().id(`d-${id}`).h(ROW_HEIGHT).flex_none().gap(2).items_center().cursor_pointer().hover((style) => style.bg(colors.hover))
+      .text_size(TEXT.body).text_color(colors.foreground).on_click((_e, cx) => this.toggleGroup(id, cx))
       .child(twistieSlot(Icon(open ? "chevron-down" : "chevron-right", 14).text_color(colors.dim)))
       .child(FileIcon(this.icons, label.split("/").pop(), { dir: true, open, size: 16 }))
       .child(div().truncate().child(label));
-    return withTreeIndent(row, colors, { depth, height: ROW_HEIGHT, hovered: this.treeHovered });
+    return withTreeIndent(row, colors, { depth: depth + 1, height: ROW_HEIGHT, firstLevel: 1, hovered: this.treeHovered });
   },
 
   walkTree(colors, node, scope, depth, prefix, out) {
@@ -791,16 +806,17 @@ export const panelMethods = {
     return out;
   },
 
-  groupHead(colors, id, label, count, color, icon, actions = []) {
+  // A VS Code resource group row: twistie, label, hover actions, count badge.
+  groupHead(colors, id, label, count, _color, _icon, actions = []) {
     const open = !this.closed.has(id);
-    return h_flex().id(`g-${id}`).h(26).flex_none().mx(4).pl(6).pr(4).gap(6).items_center().rounded(5).cursor_pointer()
-      .hover((style) => style.bg(colors.hover)).on_click((_e, cx) => this.toggleGroup(id, cx))
-      .child(Icon(open ? "chevron-down" : "chevron-right", 11).text_color(colors.dim))
-      .child(Icon(icon, 13).text_color(color))
-      .child(div().text_size(TEXT.caption).font_semibold().text_color(colors.foreground).child(label))
-      .child(this.pill(count, color))
-      .child(div().flex_1())
-      .children(actions);
+    const key = `g:${id}`;
+    const row = h_flex().id(`g-${id}`).h(GROUP_HEIGHT).flex_none().pl(treePadding(0)).pr(12).gap(2).items_center().cursor_pointer()
+      .bg(this.hot === key ? colors.hover : TRANSPARENT).on_click((_e, cx) => this.toggleGroup(id, cx))
+      .child(twistieSlot(Icon(open ? "chevron-down" : "chevron-right", 14).text_color(colors.foreground)))
+      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.body).text_color(colors.foreground).child(label))
+      .when(this.hot === key, (el) => el.gap(4).children(actions))
+      .when(count !== null, (el) => el.child(this.countBadge(colors, count)));
+    return this.hoverable(row, key);
   },
 
   group(colors, id, label, files, scope, color, icon, actions) {
@@ -820,36 +836,22 @@ export const panelMethods = {
     return out;
   },
 
-  branchChip(colors) {
-    const color = this.detached ? colors.ansi3 : colors.ansi2;
-    return h_flex().id("c-branch").h(22).min_w(0).px(8).gap(5).items_center().rounded(11).cursor_pointer()
-      .bg(tint(color, "1f")).text_size(TEXT.caption).text_color(color).hover((style) => style.bg(tint(color, "33")))
-      .tooltip(`${this.branch ?? "detached HEAD"}${this.upstream ? ` → ${this.upstream}` : ""}\nClick: switch or create a branch`)
-      .on_click(() => this.branchMenu())
-      .child(Icon("branch", 11)).child(div().min_w(0).truncate().font_medium().child(this.branch ?? `detached ${this.head?.slice(0, BRANCH_SHA) ?? ""}`))
-      .child(Icon("chevron-down", 10));
-  },
-
-  syncChip(colors) {
-    if (this.upstream) {
-      return h_flex().id("c-sync").h(22).flex_none().px(8).gap(6).items_center().rounded(11).cursor_pointer().bg(colors.raised).text_size(TEXT.caption)
-        .hover((style) => style.bg(colors.hover)).tooltip(`↓${this.behind} to pull · ↑${this.ahead} to push with ${this.upstream}\nClick: sync…`)
-        .on_click(() => this.askGit("sync"))
-        .child(div().text_color(this.behind ? colors.ansi4 : colors.dim).child(`↓${this.behind}`))
-        .child(div().text_color(this.ahead ? colors.ansi6 : colors.dim).child(`↑${this.ahead}`));
+  // VS Code 1.9x's Graph section at the bottom of Source Control: the commit graph.
+  graphGroup(colors) {
+    const open = !this.closed.has(GRAPH_GROUP);
+    const out = [this.groupHead(colors, GRAPH_GROUP, "Graph", null, null, null, [
+      IconButton({ id: "gr-open", icon: "pipeline", label: "Open Commit Graph", size: 20, onClick: () => this.runCmd({ cmd: "graph" }) }),
+    ])];
+    if (open) {
+      out.push(...this.sectionBody(colors, COMMITS_SECTION, this.data[COMMITS_SECTION]));
     }
-    if (!this.branch || !this.head) {
-      return null;
-    }
-    return h_flex().id("c-publish").h(22).flex_none().px(8).gap(5).items_center().rounded(11).cursor_pointer().bg(colors.raised).text_size(TEXT.caption).text_color(colors.ansi6)
-      .hover((style) => style.bg(colors.hover)).tooltip("Not on the remote yet · click to publish…").on_click(() => this.askGit("publish"))
-      .child(Icon("cloud-upload", 12)).child("Publish");
+    return out;
   },
 
   messageCard(colors) {
     const info = subjectInfo(this.message.value());
     const infoColor = info.level === "over" ? colors.ansi1 : info.level === "long" ? colors.ansi3 : colors.dim;
-    return v_flex().id("c-card").flex_none().rounded(8).border_1().border_color(this.amend ? colors.ansi3 : colors.border).bg(colors.input ?? colors.background)
+    return v_flex().id("c-card").flex_none().rounded(2).border_1().border_color(this.amend ? colors.ansi3 : colors.border).bg(colors.input ?? colors.background)
       .on_key_down((event, cx) => {
         if (event.key !== "enter" || !event.modifiers?.platform) {
           return;
@@ -857,40 +859,34 @@ export const panelMethods = {
         cx.stop_propagation();
         this.commit(cx);
       })
-      .child(Textarea.new(this.message).id("c-msg").w_full().min_h(52).px(8).pt(6).text_size(TEXT.small))
-      .child(h_flex().h(24).flex_none().px(6).gap(6).items_center()
+      .child(Textarea.new(this.message).id("c-msg").w_full().min_h(26).px(6).pt(4).text_size(TEXT.body))
+      .when(this.amend || info.len > 0, (el) => el.child(h_flex().h(20).flex_none().px(6).gap(6).items_center()
         .when(this.amend, (el) => el.child(h_flex().h(16).px(6).gap(4).items_center().rounded(8).bg(tint(colors.ansi3, "26")).text_size(TEXT.tiny).text_color(colors.ansi3)
           .child(Icon("pencil", 9)).child("AMEND")))
         .child(div().flex_1())
-        .when(info.len > 0, (el) => el.child(div().id("c-len").text_size(TEXT.tiny).text_color(infoColor).tooltip("Subject line length: 50 is tidy, 72 is the limit").child(`${info.len}`))));
+        .when(info.len > 0, (el) => el.child(div().id("c-len").text_size(TEXT.tiny).text_color(infoColor).tooltip("Subject line length: 50 is tidy, 72 is the limit").child(`${info.len}`)))));
   },
 
-  primaryCount(primary, groups) {
-    if (primary.kind === COMMIT && groups.staged.length) {
-      return ` (${groups.staged.length})`;
-    }
-    return primary.kind === COMMIT_ALL ? ` (${groups.unstaged.length})` : "";
-  },
-
+  // VS Code's primary action button: full width, blue, with a split dropdown.
   commitButton(colors) {
     const primary = this.primary();
-    const groups = this.groups();
     const solid = primary.enabled;
     const accent = primary.kind === AMEND ? colors.ansi3 : colors.accent;
-    const foreground = solid ? colors.accent_foreground ?? colors.background : colors.dim;
-    return h_flex().id("c-commit-row").h(30).flex_none().rounded(6).overflow_hidden()
-      .bg(solid ? accent : colors.raised).border_1().border_color(solid ? accent : colors.border)
-      .child(h_flex().id("c-commit").flex_1().h_full().gap(6).items_center().justify_center().text_size(TEXT.small).font_medium().text_color(foreground)
+    const background = solid ? accent : tint(accent, DISABLED_BUTTON_ALPHA);
+    const foreground = colors.accent_foreground ?? "#ffffff";
+    const label = primary.kind === COMMIT_ALL ? "Commit" : primary.label;
+    return h_flex().id("c-commit-row").h(26).flex_none().rounded(2).overflow_hidden().bg(background)
+      .child(h_flex().id("c-commit").flex_1().h_full().gap(6).items_center().justify_center().text_size(TEXT.body).text_color(solid ? foreground : tint(foreground, "b0"))
         .tooltip(primary.tip)
         .when(solid, (el) => el.cursor_pointer().hover((style) => style.bg(tint(PRESSED_TINT, "14"))).on_click((_e, cx) => this.commit(cx)))
-        .child(this.busy ? Icon("spinner", 13).spin(SPIN_MS) : Icon(primaryIcon(primary.kind), 13))
-        .child(`${primary.label}${this.primaryCount(primary, groups)}`)
-        .when(primary.kind === "sync", (el) => el.child(div().text_size(TEXT.caption).child(`${primary.behind}↓ ${primary.ahead}↑`))))
-      .child(div().w(1).h(18).flex_none().bg(solid ? tint(foreground, "55") : colors.border))
-      .child(div().id("c-commit-more").w(28).h_full().flex_none().flex().items_center().justify_center().cursor_pointer().text_color(foreground)
-        .hover((style) => style.bg(tint(PRESSED_TINT, "14"))).tooltip("More commit actions")
+        .child(this.busy ? Icon("spinner", 14).spin(SPIN_MS) : Icon(primaryIcon(primary.kind), 14))
+        .child(label)
+        .when(primary.kind === "sync", (el) => el.child(div().child(`${primary.behind}↓ ${primary.ahead}↑`))))
+      .child(div().w(1).h(16).flex_none().bg(tint(foreground, "40")))
+      .child(div().id("c-commit-more").w(24).h_full().flex_none().flex().items_center().justify_center().cursor_pointer().text_color(foreground)
+        .hover((style) => style.bg(tint(PRESSED_TINT, "14"))).tooltip("More Actions…")
         .on_click(() => this.commitMenu())
-        .child(Icon("chevron-down", 12)));
+        .child(Icon("chevron-down", 14)));
   },
 
   dismissNote(cx) {
@@ -899,9 +895,7 @@ export const panelMethods = {
   },
 
   commitBox(colors) {
-    const syncChip = this.syncChip(colors);
-    return v_flex().flex_none().px(10).pt(4).pb(10).gap(8)
-      .child(h_flex().gap(6).items_center().child(this.branchChip(colors)).when(Boolean(syncChip), (el) => el.child(syncChip)))
+    return v_flex().flex_none().pl(20).pr(12).pt(2).pb(6).gap(6)
       .child(this.messageCard(colors))
       .child(this.commitButton(colors))
       .when(Boolean(this.note), (el) => el.child(h_flex().gap(6).items_start().px(8).py(6).rounded(6).bg(tint(colors.ansi1, "1a"))
@@ -910,14 +904,16 @@ export const panelMethods = {
         .child(IconButton({ id: "c-note-x", icon: "x", label: "Dismiss", size: 18, onClick: (cx) => this.dismissNote(cx) }))));
   },
 
+  // VS Code's view title actions: Commit, Refresh, More. The repo picker shows only with more
+  // than one repo (VS Code's Repositories section); the branch is in the message placeholder.
   panelHead() {
-    const isTree = this.view === VIEW_TREE;
-    return h_flex().h(34).flex_none().pl(6).pr(6).gap(2).items_center()
-      .child(RepoButton(this, MOD, this.root))
+    const repos = workspace()?.roots?.length ?? 0;
+    return h_flex().h(28).flex_none().pl(4).pr(8).gap(2).items_center()
+      .when(repos > 1, (el) => el.child(RepoButton(this, MOD, this.root)))
       .child(div().flex_1())
-      .child(IconButton({ id: "c-view", icon: isTree ? "list" : "list-tree", label: isTree ? "View as List" : "View as Tree", size: 22, onClick: (cx) => this.setView(isTree ? VIEW_FLAT : VIEW_TREE, cx) }))
+      .child(IconButton({ id: "c-title-commit", icon: "check", label: `Commit${this.branch ? ` on "${this.branch}"` : ""} (⌘Enter)`, size: 22, disabled: !this.primary().enabled, onClick: (cx) => this.commit(cx) }))
       .child(IconButton({ id: "c-refresh", icon: "refresh", label: "Refresh", spinning: Boolean(this.loading || this.busy), size: 22, onClick: (cx) => this.refresh(cx) }))
-      .child(IconButton({ id: "c-more", icon: "more", label: "More actions…", size: 22, onClick: () => this.moreMenu() }));
+      .child(IconButton({ id: "c-more", icon: "more", label: "More Actions… (View as Tree/List, Pull, Push, Checkout, Stash)", size: 22, onClick: () => this.moreMenu() }));
   },
 
   cleanTree(colors) {
@@ -941,17 +937,22 @@ export const panelMethods = {
       return panel.child(body.children(this.renderSections(colors)));
     }
     body.child(this.commitBox(colors));
-    body.children(this.group(colors, "conflicts", "Merge Changes", groups.conflicts, "conflict", colors.ansi1, "merge"));
+    body.children(this.group(colors, "conflicts", "Merge Changes", groups.conflicts, "conflict", colors.ansi1, "merge", [
+      IconButton({ id: "ga-open-conflicts", icon: "files", label: "Open Changes", size: 20, onClick: () => this.openAll(groups.conflicts, "conflict") }),
+    ]));
     body.children(this.group(colors, STAGED, "Staged Changes", groups.staged, STAGED, colors.ansi2, "check", [
-      IconButton({ id: "ga-unstage", icon: "minus", label: "Unstage All", size: 20, disabled: this.busy, onClick: (cx) => this.index(UNSTAGE, groups.staged, cx) }),
+      IconButton({ id: "ga-open-staged", icon: "files", label: "Open Changes", size: 20, onClick: () => this.openAll(groups.staged, STAGED) }),
+      IconButton({ id: "ga-unstage", icon: "minus", label: "Unstage All Changes", size: 20, disabled: this.busy, onClick: (cx) => this.index(UNSTAGE, groups.staged, cx) }),
     ]));
     body.children(this.group(colors, "unstaged", "Changes", groups.unstaged, "unstaged", colors.ansi3, "pencil", [
+      IconButton({ id: "ga-open", icon: "files", label: "Open Changes", size: 20, onClick: () => this.openAll(groups.unstaged, "unstaged") }),
       IconButton({ id: "ga-discard", icon: "discard", label: "Discard All Changes…", size: 20, disabled: this.busy, onClick: () => this.askDiscard(groups.unstaged) }),
       IconButton({ id: "ga-stage", icon: "plus", label: "Stage All Changes", size: 20, disabled: this.busy, onClick: (cx) => this.index(STAGE, groups.unstaged, cx) }),
     ]));
     if (!this.files.length && !this.loading) {
       body.child(this.cleanTree(colors));
     }
+    body.children(this.graphGroup(colors));
     return panel.child(body);
   },
 };

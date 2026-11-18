@@ -15,8 +15,8 @@ class HerdrVscodeChanges extends View {
   static REFRESH_MS = 10000;
   static COMMAND_MS = 50;
   static VIEW_MODE = "view";
-  static MESSAGE_ROWS = 3;
-  static MESSAGE_MIN_ROWS = 2;
+  static MESSAGE_ROWS = 1;
+  static MESSAGE_MIN_ROWS = 1;
   static MESSAGE_MAX_ROWS = 10;
 
   static HISTORY_PART = "history";
@@ -61,9 +61,26 @@ class HerdrVscodeChanges extends View {
     this.confirmFocus.focus();
   }
 
+  // VS Code's placeholder names the branch. A placeholder is fixed, so a new branch makes a new
+  // (still empty) message box.
+  static messageState(branch) {
+    const where = branch ? ` on "${branch}"` : "";
+    const state = TextareaState.new({ placeholder: `Message (⌘Enter to commit${where})`, rows: HerdrVscodeChanges.MESSAGE_ROWS });
+    state.set_auto_grow(HerdrVscodeChanges.MESSAGE_MIN_ROWS, HerdrVscodeChanges.MESSAGE_MAX_ROWS);
+    return state;
+  }
+
+  syncPlaceholder() {
+    if (this.placeholderBranch === this.branch || this.message.value()) {
+      return;
+    }
+    this.placeholderBranch = this.branch;
+    this.message = HerdrVscodeChanges.messageState(this.branch);
+    this.message.on("change", (_e, cx) => cx.notify());
+  }
+
   initPanelView(cx) {
-    this.message = TextareaState.new({ placeholder: "Message (⌘Enter to commit)", rows: HerdrVscodeChanges.MESSAGE_ROWS });
-    this.message.set_auto_grow(HerdrVscodeChanges.MESSAGE_MIN_ROWS, HerdrVscodeChanges.MESSAGE_MAX_ROWS);
+    this.message = HerdrVscodeChanges.messageState(null);
     this.search = InputState.new({ placeholder: "Search commits" });
     this.initPanel(cx);
     this.initSections();

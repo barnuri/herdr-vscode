@@ -185,7 +185,12 @@ export const sectionMethods = {
     if (this.remoteFor !== this.root) {
       this.loadRemote(cx);
     }
-    for (const id of new Set([...this.open, BRANCHES])) {
+    const ids = new Set([...this.open, BRANCHES]);
+    // Source Control's Graph section shows the commits too.
+    if (this.part !== "history" && !this.closed?.has("graph")) {
+      ids.add(COMMITS);
+    }
+    for (const id of ids) {
       this.loadSection(id, cx);
     }
   },
