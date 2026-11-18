@@ -1,6 +1,6 @@
 import { View, div } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { theme, layout, run, shared, setShared, agents, nextCommand, notify, checking, props } from "herdr";
+import { theme, layout, run, shared, setShared, agents, nextCommand, notify, checking, props, openOverlay, closeOverlay } from "herdr";
 import { ctx, repoTop, baseName, workspace } from "./ws.js";
 import { showInViewer } from "./tabs.js";
 import { Icon } from "./ui.js";
@@ -17,12 +17,23 @@ class VxActivity extends View {
   static BADGE_MAX = 999;
   static PANEL_VIEWS = ["problems", "terminal", "ports"];
   static WAITING_STATUSES = ["blocked", "done"];
+  static WORKING_STATUS = "working";
+  static PREFS_KEY = "vx.activity";
+  static EXPLORER_SECTIONS = [
+    { id: "timeline", icon: "history", name: "Explorer: Timeline" },
+    { id: "npm", icon: "play", name: "Explorer: NPM Scripts" },
+  ];
+  static MENU_WIDTH = 220;
+  static MENU_ROW_PX = 26;
+  static MENU_PAD_PX = 12;
+  static DROP_BAR_PX = 2;
   static DEFAULT_ACCENT_FOREGROUND = "#ffffff";
   static COLOR_PREFIX = "#";
   static VIEWS = [
     { id: "explorer", icon: "files", title: "Explorer (⌘⇧E)", name: "Explorer" },
     { id: "search", icon: "search", title: "Search (⌘⇧F)", name: "Search" },
     { id: "scm", icon: "branch", title: "Source Control (⌘⇧G)", name: "Source Control" },
+    { id: "history", icon: "history", title: "Git History", name: "Git History" },
     { id: "ci", icon: "ci", title: "CI / CD", name: "CI / CD" },
     { id: "running", icon: "play", title: "Running (⌘⇧R)", name: "Running" },
     { id: "spaces", icon: "layers", title: "Spaces", name: "Spaces" },
@@ -32,6 +43,10 @@ class VxActivity extends View {
   init(given, cx) {
     const options = props() ?? given ?? {};
     this.tops = new Map();
+    if (options.visibilityMenu) {
+      this.visibilityMenu = true;
+      return;
+    }
     if (options.title) {
       this.title = true;
       if (!checking()) {
@@ -141,11 +156,13 @@ class VxActivity extends View {
     const ciByRoot = shared("vx.ci.summary") ?? {};
     const kinds = roots.map((root) => ciByRoot[root.path]?.kind).filter(Boolean);
     const ciDot = VxActivity.ciDotColor(kinds, t);
-    const waiting = (agents() ?? []).filter((agent) => VxActivity.WAITING_STATUSES.includes(agent.status)).length;
+    const all = agents() ?? [];
+    const waiting = all.filter((agent) => VxActivity.WAITING_STATUSES.includes(agent.status)).length;
+    const working = all.filter((agent) => agent.status === VxActivity.WORKING_STATUS).length;
     return {
       scm: changed ? String(changed > VxActivity.BADGE_MAX ? `${VxActivity.BADGE_MAX}+` : changed) : null,
       ci: ciDot,
-      agents: waiting ? String(waiting) : null,
+      agents: working ? String(working) : null,
       running: waiting ? String(waiting) : null,
     };
   }
@@ -158,6 +175,105 @@ class VxActivity extends View {
       return t.ansi4;
     }
     return null;
+  }
+
+  static prefs() {
+    const saved = shared(VxActivity.PREFS_KEY) ?? {};
+    return { order: Array.isArray(saved.order) ? saved.order : [], hidden: Array.isArray(saved.hidden) ? saved.hidden : [] };
+  }
+
+  static savePrefs(patch) {
+    setShared(VxActivity.PREFS_KEY, { ...VxActivity.prefs(), ...patch });
+  }
+
+  toggleHidden(id) {
+    const hidden = new Set(VxActivity.prefs().hidden);
+    if (hidden.has(id)) {
+      hidden.delete(id);
+    } else {
+      hidden.add(id);
+    }
+    VxActivity.savePrefs({ hidden: [...hidden] });
+  }
+
+  openVisibilityMenu() {
+    const rows = VxActivity.VIEWS.length + VxActivity.EXPLORER_SECTIONS.length;
+    const height = rows * VxActivity.MENU_ROW_PX + VxActivity.MENU_PAD_PX * 2;
+    openOverlay({ mod: "vx-activity", kind: "popup", width: VxActivity.MENU_WIDTH, height, props: { visibilityMenu: true } });
+  }
+
+  menuRow(t, id, icon, name, checked, onClick) {
+    return div().id(`vis-${id}`).h(VxActivity.MENU_ROW_PX).px(8).gap(8).flex().items_center()
+      .rounded(4).cursor_pointer().hover((style) => style.bg(t.hover))
+      .on_click(onClick)
+      .child(div().w(14).flex_none().child(checked ? "✓" : ""))
+      .child(Icon(icon, 14))
+      .child(div().flex_1().child(name));
+  }
+
+  static toggleSection(id) {
+    const hidden = Boolean(findNode(layout(), id)?.hidden);
+    run(hidden ? "layout.show" : "layout.hide", { id });
+  }
+
+  renderVisibilityMenu() {
+    const t = theme();
+    const hidden = new Set(VxActivity.prefs().hidden);
+    const root = layout();
+    return v_flex().id("vx-activity-menu").size_full().p(6).bg(t.popover ?? t.surface).text_size(12).text_color(t.foreground)
+      .children(this.orderedViews().map((view) => this.menuRow(t, view.id, view.icon, view.name, !hidden.has(view.id), () => this.toggleHidden(view.id))))
+      .child(div().h(1).my(5).bg(t.border))
+      .children(VxActivity.EXPLORER_SECTIONS.filter((section) => findNode(root, section.id))
+        .map((section) => this.menuRow(t, section.id, section.icon, section.name, !findNode(root, section.id).hidden, () => VxActivity.toggleSection(section.id))))
+      .on_key_down((event) => {
+        if (event.key === "escape") {
+          closeOverlay(props()?.overlay);
+        }
+      });
+  }
+
+  orderedViews() {
+    const order = VxActivity.prefs().order;
+    const position = (id) => {
+      const index = order.indexOf(id);
+      return index === -1 ? order.length + VxActivity.VIEWS.findIndex((view) => view.id === id) : index;
+    };
+    return [...VxActivity.VIEWS].sort((left, right) => position(left.id) - position(right.id));
+  }
+
+  moveView(from, to) {
+    const ids = this.orderedViews().map((view) => view.id).filter((id) => id !== from);
+    ids.splice(ids.indexOf(to), 0, from);
+    VxActivity.savePrefs({ order: ids });
+  }
+
+  draggable(el, t, id) {
+    const target = this.drag && this.drag !== id && this.dropTarget === id;
+    return el
+      .on_mouse_down("right", (_e, cx) => {
+        cx.stop_propagation();
+        this.openVisibilityMenu();
+      })
+      .on_mouse_down("left", () => {
+        this.drag = id;
+        this.dropTarget = null;
+      })
+      .on_hover((hovered, cx) => {
+        if (this.drag && hovered && this.dropTarget !== id) {
+          this.dropTarget = id;
+          cx.notify();
+        }
+      })
+      .on_mouse_up("left", (_e, cx) => {
+        const from = this.drag;
+        this.drag = null;
+        this.dropTarget = null;
+        if (from && from !== id) {
+          this.moveView(from, id);
+        }
+        cx.notify();
+      })
+      .when(target, (item) => item.child(div().absolute().top(0).left(6).right(6).h(VxActivity.DROP_BAR_PX).bg(t.accent)));
   }
 
   item(t, id, icon, title, on, onClick, badge) {
@@ -182,6 +298,9 @@ class VxActivity extends View {
   }
 
   render() {
+    if (this.visibilityMenu) {
+      return this.renderVisibilityMenu();
+    }
     if (this.title) {
       return this.renderTitle();
     }
@@ -190,9 +309,21 @@ class VxActivity extends View {
     const present = new Set((stack?.children ?? []).map((child) => child.id));
     const on = this.shown();
     const badges = this.badges(t);
+    const hidden = new Set(VxActivity.prefs().hidden);
     return v_flex().id("vx-activity").size_full().items_center().bg(t.canvas ?? t.chrome)
-      .children(VxActivity.VIEWS.filter((view) => present.has(view.id))
-        .map((view) => this.item(t, view.id, view.icon, view.title, on === view.id, () => this.click(view.id), badges[view.id] ?? null)))
+      .on_mouse_up("left", (_e, cx) => {
+        if (this.drag) {
+          this.drag = null;
+          this.dropTarget = null;
+          cx.notify();
+        }
+      })
+      .on_mouse_down("right", (_e, cx) => {
+        cx.stop_propagation();
+        this.openVisibilityMenu();
+      })
+      .children(this.orderedViews().filter((view) => present.has(view.id) && (!hidden.has(view.id) || on === view.id))
+        .map((view) => this.draggable(this.item(t, view.id, view.icon, view.title, on === view.id, () => this.click(view.id), badges[view.id] ?? null), t, view.id)))
       .child(div().flex_1())
       .child(this.item(t, "graph", "git-commit", "Commit Graph of the context repo", false, (cx) => this.openGraph(cx), null))
       .child(this.item(t, "settings", "gear", "Settings", false, () => run("app.settings"), null));

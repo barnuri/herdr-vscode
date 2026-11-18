@@ -18,6 +18,9 @@ class VxChanges extends View {
   static MESSAGE_MIN_ROWS = 2;
   static MESSAGE_MAX_ROWS = 10;
 
+  static HISTORY_PART = "history";
+  static CHANGES_PART = "changes";
+
   static {
     Object.assign(this.prototype, panelMethods, diffMethods, sectionMethods, scmPopupMethods, confirmMethods);
   }
@@ -44,6 +47,7 @@ class VxChanges extends View {
       }
       return;
     }
+    this.part = options.part === VxChanges.HISTORY_PART ? VxChanges.HISTORY_PART : VxChanges.CHANGES_PART;
     this.initPanelView(cx);
   }
 

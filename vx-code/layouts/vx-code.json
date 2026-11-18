@@ -125,6 +125,16 @@
                   }
                 },
                 {
+                  "id": "history",
+                  "type": "block",
+                  "content": {
+                    "mod": "vx-changes",
+                    "props": {
+                      "part": "history"
+                    }
+                  }
+                },
+                {
                   "id": "ci",
                   "type": "block",
                   "content": {

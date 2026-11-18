@@ -11,6 +11,7 @@ import { askConfirm } from "./actions.js";
 import { openScmMenu, openScmAsk } from "./scm-popups.js";
 
 const MOD = "vx-changes";
+const HISTORY_PART = "history";
 const FILES_MOD = "vx-files";
 const COMMAND_KEY = "vx.changes.cmd";
 const CLOSED_KEY = "closed";
@@ -907,6 +908,9 @@ export const panelMethods = {
       return panel.child(Message(this.error ?? "Pick a repo in Workspace, or focus a terminal inside one."));
     }
     const body = v_flex().id("c-body").flex_1().min_h(0).overflow_y_scrollbar().pb(8).gap(1);
+    if (this.part === HISTORY_PART) {
+      return panel.child(body.children(this.renderSections(colors)));
+    }
     body.child(this.commitBox(colors));
     body.children(this.group(colors, "conflicts", "Merge Changes", groups.conflicts, "conflict", colors.ansi1, "merge"));
     body.children(this.group(colors, STAGED, "Staged Changes", groups.staged, STAGED, colors.ansi2, "check", [
@@ -919,7 +923,6 @@ export const panelMethods = {
     if (!this.files.length && !this.loading) {
       body.child(this.cleanTree(colors));
     }
-    body.children(this.renderSections(colors));
     return panel.child(body);
   },
 };
