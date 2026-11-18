@@ -186,6 +186,19 @@ export function diffRows(lines) {
   return rows;
 }
 
+// UTF-16 offset of the start of 1-based `line` in `text` (the end of the text past its last line).
+export function lineStartOffset(text, line) {
+  let offset = 0;
+  for (let current = 1; current < line; current++) {
+    const next = text.indexOf("\n", offset);
+    if (next < 0) {
+      return text.length;
+    }
+    offset = next + 1;
+  }
+  return offset;
+}
+
 // Side by side: removals and additions of one change paired by position.
 export function splitRows(rows) {
   const out = [];

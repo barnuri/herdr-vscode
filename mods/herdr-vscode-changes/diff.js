@@ -1,11 +1,12 @@
 import { div } from "gpui-kit";
-import { v_flex, h_flex, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
-import { theme, readTextFile, exec } from "herdr";
+import { v_flex, h_flex, v_virtual_list, Scrollbar, VirtualListScrollHandle, EditorState, Editor } from "gpui-base";
+import { theme, readTextFile, writeTextFile, exec } from "herdr";
 import { git, bump } from "./ws.js";
 import { splitHunks, hunkPatch } from "./scm-core.js";
-import { READ, diffRows, splitRows } from "./git-core.js";
+import { READ, diffRows, splitRows, lineStartOffset } from "./git-core.js";
 import { lexLine, languageOf, syntaxColors } from "./syntax-core.js";
-import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, codeLineHeight, tabSpaces, tint, SPIN_MS } from "./ui.js";
+import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, codeLineHeight, tabSpaces, codeWrap, tint, SPIN_MS } from "./ui.js";
+import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
 import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
 import { toast } from "./log.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
@@ -22,6 +23,8 @@ const DIFF_INLINE = "inline";
 const SHORT_SHA = 8;
 const ERROR_TAIL = 400;
 const SUCCESS_TIMEOUT_MS = 2000;
+const AUTOSAVE_TICK_MS = 250;
+const STALE_WRITE = /stale|changed|expected/i;
 const ERROR_TIMEOUT_MS = 6000;
 const NUMBER_WIDTH_FACTOR = 3;
 const MARK_WIDTH_FACTOR = 1.6;
@@ -81,6 +84,9 @@ const lineNumber = (value) => (value !== undefined ? String(value) : "");
 
 const stageableScope = (target) => target.scope === "unstaged" || target.scope === "staged";
 
+// The working tree side is editable in the split layout (a local repo; writeTextFile has no `on`).
+const editableTarget = (target) => Boolean(target && !target.on && (target.untracked || target.scope === "unstaged"));
+
 const isMergeDiff = (head) => /^diff --(cc|combined)/.test(head[0] ?? "");
 
 export const diffMethods = {
@@ -98,6 +104,7 @@ export const diffMethods = {
     // The target is cheap to check: follow a click at once, reload git every POLL_MS.
     cx.timer.every(FOLLOW_MS, (cx) => this.syncDiff(cx));
     cx.timer.every(POLL_MS, (cx) => this.syncDiff(cx, true));
+    cx.timer.every(AUTOSAVE_TICK_MS, (cx) => this.autoSaveWorking(cx));
     this.syncDiff(cx);
   },
 
@@ -126,6 +133,7 @@ export const diffMethods = {
       return;
     }
     if (key !== this.diffKey) {
+      this.releaseWorkingEditor(cx);
       this.diffKey = key;
       this.target = target;
       this.rows = null;
@@ -210,6 +218,7 @@ export const diffMethods = {
         if (lines) {
           this.applyLines(lines);
         }
+        await this.loadWorkingText(target, cx);
       } finally {
         this.loadingDiff = false;
         cx.notify();
@@ -250,7 +259,113 @@ export const diffMethods = {
     if (index >= 0) {
       this.scroller.scroll_to_item(index, "top");
     }
+    this.revealWorkingLine(this.hunks.hunks[this.hunk]);
     cx.notify();
+  },
+
+  // Line mapping: the editor scrolls to its cursor, so put it on the hunk's first new line.
+  revealWorkingLine(hunk) {
+    const line = Number(/^@@ -\d+(?:,\d+)? \+(\d+)/.exec(hunk?.[0] ?? "")?.[1]);
+    if (!this.editor || !line) {
+      return;
+    }
+    const offset = lineStartOffset(this.editor.value(), line);
+    this.editor.set_selected_range({ start: offset, end: offset });
+    this.editor.focus();
+  },
+
+  async loadWorkingText(target, cx) {
+    if (!this.split || !editableTarget(target) || target !== this.target) {
+      return;
+    }
+    const text = await readTextFile(`${target.root}/${target.path}`).catch(() => null);
+    if (text === null || text.includes("\0") || target !== this.target) {
+      return;
+    }
+    if (!this.editor) {
+      this.openWorkingEditor(target, text, cx);
+      return;
+    }
+    // Changed on disk while the buffer is clean: follow the file.
+    if (this.editor.value() === this.saved && text !== this.saved) {
+      this.saved = text;
+      this.editor.set_value(text);
+    }
+  },
+
+  openWorkingEditor(target, text, cx) {
+    const colors = syntaxColors(theme());
+    this.editor = EditorState.new({
+      language: languageOf(target.path) ?? undefined, value: text, font_family: codeFont(), font_size: codeSize(), soft_wrap: codeWrap(),
+      syntax: { keyword: colors.keyword, string: colors.string, comment: colors.comment, function: colors.fn, type: colors.type, number: colors.number, constant: colors.constant },
+    });
+    this.saved = text;
+    this.editorTarget = target;
+    this.editor.on("change", (_event, cx) => {
+      this.editedAt = Date.now();
+      cx.notify();
+    });
+    this.editor.on("blur", (_event, cx) => this.autoSaveWorking(cx, true));
+    cx.notify();
+  },
+
+  workingDirty() {
+    return Boolean(this.editor) && this.editor.value() !== this.saved;
+  },
+
+  autoSaveWorking(cx, leaving = false) {
+    if (!this.editor) {
+      return;
+    }
+    const mode = getSetting("files", "autoSave", AUTOSAVE_DEFAULT);
+    if (autoSaveDue({ mode, dirty: this.workingDirty(), writable: true, editedAt: this.editedAt ?? 0, now: Date.now(), blurred: leaving })) {
+      this.saveWorking(cx, { quiet: true });
+    }
+  },
+
+  // Leaving the file (another diff, inline layout) saves a dirty buffer, then drops the editor.
+  releaseWorkingEditor(cx) {
+    if (!this.editor) {
+      return;
+    }
+    if (this.workingDirty()) {
+      this.saveWorking(cx, { quiet: true });
+    }
+    this.editor.release();
+    this.editor = null;
+    this.editorTarget = null;
+  },
+
+  saveWorking(cx, { quiet = false } = {}) {
+    const target = this.editorTarget;
+    if (!this.editor || !target || !this.workingDirty() || this.savingWorking) {
+      return;
+    }
+    const text = this.editor.value();
+    const expected = this.saved;
+    const name = target.path.split("/").pop();
+    this.savingWorking = true;
+    cx.spawn(async (cx) => {
+      try {
+        await writeTextFile(`${target.root}/${target.path}`, text, expected);
+        if (this.editorTarget === target) {
+          this.saved = text;
+        }
+        bump(target.root);
+        if (!quiet) {
+          toast(MOD, { title: `Saved ${name}`, level: "success", timeout: SUCCESS_TIMEOUT_MS });
+        }
+        // Realign: the left side and the hunks come from a fresh git diff.
+        this.lastRaw = null;
+        this.loadDiff(cx);
+      } catch (error) {
+        const body = STALE_WRITE.test(String(error)) ? "The file changed on disk since it was loaded. Undo your edit to follow the file." : String(error?.message ?? error);
+        toast(MOD, { title: `Not saved: ${name}`, body, level: "error", timeout: ERROR_TIMEOUT_MS });
+      } finally {
+        this.savingWorking = false;
+        cx.notify();
+      }
+    });
   },
 
   applyHunk(cx) {
@@ -302,6 +417,11 @@ export const diffMethods = {
 
   setSplit(split, cx) {
     this.split = split;
+    if (!split) {
+      this.releaseWorkingEditor(cx);
+    } else {
+      this.loadWorkingText(this.target, cx).then(() => cx.notify());
+    }
     setSetting("scm", "diffLayout", split ? DIFF_SPLIT : DIFF_INLINE);
     cx.notify();
   },
@@ -314,6 +434,8 @@ export const diffMethods = {
       .child(div().flex_none().max_w(300).truncate().font_medium().child(name))
       .child(div().flex_1().min_w(0).truncate().text_color(colors.dim).child(dir))
       .child(Badge(scopeLabel(target), scopeColor(colors, target.scope)))
+      .when(Boolean(this.editor), (el) => el.child(div().text_size(TEXT.caption).text_color(this.workingDirty() ? colors.ansi3 : colors.dim)
+        .child(this.workingDirty() ? "● edited (⌘S)" : "editable")))
       .when(Boolean(target.subject), (el) => el.child(div().max_w(260).truncate().text_color(colors.muted).child(target.subject)))
       .when(Boolean(this.rows), (el) => el.child(div().text_color(colors.ansi2).child(`+${this.adds}`)).child(div().text_color(colors.ansi1).child(`−${this.dels}`)))
       .when(Boolean(this.rows && this.hunks?.hunks.length), (el) => el.child(this.hunkBar(colors)))
@@ -351,11 +473,48 @@ export const diffMethods = {
     cx.notify();
   },
 
+  // Split layout with an editable working tree: the HEAD/index side of each row on the left
+  // (blank where the right only adds), the whole working file in the editor on the right.
+  editableBody(colors, syntax, lang, size, height) {
+    const items = this.pairs;
+    const listId = `diff-${this.diffKey}-e`;
+    const itemKey = (index) => (items[index]?.kind === HUNK_ROW ? `${HUNK_KEY_PREFIX}${items[index].hunk}` : `r${index}`);
+    const leftRow = (row) => {
+      if (row.kind === HUNK_ROW) {
+        return this.hunkHeaderRow(colors, row, height);
+      }
+      if (row.kind === "") {
+        return h_flex().h(height).w_full().px(10).items_center().text_color(colors.dim).child(row.text);
+      }
+      return h_flex().h(height).w_full().child(this.cell(colors, syntax, row.left, lang, "left"));
+    };
+    const drawRange = (range) => items.slice(range.start, range.end).map(leftRow);
+    return h_flex().id("d-body").flex_1().min_h(0).font_family(codeFont()).text_size(size)
+      .child(div().flex_1().min_w(0).h_full().relative()
+        .child(v_virtual_list(listId, items.length, height, itemKey, drawRange)
+          .track_scroll(this.scroller)
+          .on_item_click((key, cx) => this.selectHunkByKey(key, cx))
+          .size_full())
+        .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0()))
+      .child(div().w(1).h_full().bg(colors.border))
+      .child(div().id("d-editor").flex_1().min_w(0).h_full()
+        .on_key_down((event, cx) => {
+          if (event.key === "s" && event.modifiers?.platform) {
+            cx.stop_propagation();
+            this.saveWorking(cx);
+          }
+        })
+        .child(Editor.new(this.editor).size_full()));
+  },
+
   diffBody(colors, target) {
     const syntax = syntaxColors(colors);
     const lang = languageOf(target.path);
     const size = codeSize();
     const height = Math.round(size * codeLineHeight());
+    if (this.split && this.editor) {
+      return this.editableBody(colors, syntax, lang, size, height);
+    }
     const items = this.split ? this.pairs : this.rows;
     const listId = `diff-${this.diffKey}-${this.split ? "s" : "i"}`;
     const itemKey = (index) => (items[index]?.kind === HUNK_ROW ? `${HUNK_KEY_PREFIX}${items[index].hunk}` : `r${index}`);

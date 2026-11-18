@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseJsonc } from "../shared/jsonc.js";
 import { resolvePath, rootsFromWorkspace, rootFor, chooseContext, workspaceName } from "../shared/ws-core.js";
-import { parseStatus, parseNumstat, parseRemote, providerOf, diffRows, splitRows, parseHunks, parseLog } from "../shared/git-core.js";
+import { parseStatus, parseNumstat, parseRemote, providerOf, diffRows, splitRows, parseHunks, parseLog, lineStartOffset } from "../shared/git-core.js";
 
 test("jsonc: comments, trailing commas, and // inside strings", () => {
   const text = `{
@@ -93,4 +93,12 @@ test("diffs and log", () => {
   assert.equal(split[3].left, null);
   assert.equal(parseHunks("@@ -3 +3,0 @@\n-x\n")[0].kind, "removed");
   assert.deepEqual(parseLog("h1\x00s1\x00Ann\x00100\x00subj one\x1e\nh2\x00s2\x00Bob\x00200\x00two\x1e\n").map((commit) => commit.short), ["s1", "s2"]);
+});
+
+test("lineStartOffset maps a 1-based line to its UTF-16 offset", () => {
+  const text = "ab\nçd\n\nlast";
+  assert.equal(lineStartOffset(text, 1), 0);
+  assert.equal(lineStartOffset(text, 2), 3);
+  assert.equal(lineStartOffset(text, 4), 7);
+  assert.equal(lineStartOffset(text, 9), text.length);
 });
