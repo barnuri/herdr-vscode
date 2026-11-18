@@ -13,6 +13,7 @@ import { getSetting, setSetting, whenSettings } from "./settings.js";
 const MOD = "herdr-vscode-changes";
 const MAX_ROWS = 6000;
 const POLL_MS = 2000;
+const FOLLOW_MS = 100;
 // Before settings.json the split diff toggle lived in localStorage: still the default.
 const OLD_SPLIT_KEY = "split";
 const OLD_SPLIT_ON = "1";
@@ -96,6 +97,8 @@ export const diffMethods = {
       this.split = splitOf(this.split ? DIFF_SPLIT : DIFF_INLINE);
     });
     this.scroller = VirtualListScrollHandle.new();
+    // The target is cheap to check: follow a click at once, reload git every POLL_MS.
+    cx.timer.every(FOLLOW_MS, (cx) => this.syncDiff(cx));
     cx.timer.every(POLL_MS, (cx) => this.syncDiff(cx, true));
     this.syncDiff(cx);
   },
@@ -131,6 +134,7 @@ export const diffMethods = {
       this.problem = null;
       this.hunk = 0;
       this.hunks = null;
+      this.lastRaw = null;
     }
     this.loadDiff(cx);
   },
@@ -141,6 +145,11 @@ export const diffMethods = {
       this.problem = "This file is gone, too large, or unreadable.";
       return null;
     }
+    // Unchanged since the last poll: nothing to parse.
+    if (text === this.lastRaw && this.rows) {
+      return null;
+    }
+    this.lastRaw = text;
     if (text.includes("\0")) {
       this.problem = "Binary file.";
       return null;
@@ -155,6 +164,11 @@ export const diffMethods = {
       this.problem = result.stderr.trim() || "git diff failed";
       return null;
     }
+    // Unchanged since the last poll: skip splitting and parsing.
+    if (result.stdout === this.lastRaw && this.rows) {
+      return null;
+    }
+    this.lastRaw = result.stdout;
     const lines = result.stdout.replace(/\n$/, "").split("\n");
     const first = lines.findIndex((line) => line.startsWith("@@"));
     if (first < 0) {
@@ -167,11 +181,6 @@ export const diffMethods = {
   },
 
   applyLines(lines) {
-    const text = JSON.stringify(lines);
-    if (text === this.lastLines) {
-      return;
-    }
-    this.lastLines = text;
     this.problem = null;
     this.truncated = lines.length > MAX_ROWS;
     this.rows = diffRows(lines.slice(0, MAX_ROWS).map((line) => line.replace(/\t/g, TAB_SPACES)));

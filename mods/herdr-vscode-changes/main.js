@@ -13,6 +13,7 @@ import { ConfirmView } from "./ui.js";
 class HerdrVscodeChanges extends View {
   static FOLLOW_MS = 400;
   static REFRESH_MS = 10000;
+  static COMMAND_MS = 50;
   static VIEW_MODE = "view";
   static MESSAGE_ROWS = 3;
   static MESSAGE_MIN_ROWS = 2;
@@ -70,6 +71,7 @@ class HerdrVscodeChanges extends View {
       return;
     }
     cx.timer.every(HerdrVscodeChanges.FOLLOW_MS, (cx) => this.followPanel(cx));
+    cx.timer.every(HerdrVscodeChanges.COMMAND_MS, (cx) => this.takeScmCommand(cx));
     cx.timer.every(HerdrVscodeChanges.REFRESH_MS, (cx) => this.refresh(cx));
     // Key bindings and `herdr-app do herdr-vscode-changes.viewAsTree` (or .viewAsList).
     cx.spawn(async (cx) => {

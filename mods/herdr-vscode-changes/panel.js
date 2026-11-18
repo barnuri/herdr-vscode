@@ -157,12 +157,18 @@ export const panelMethods = {
       this.seenChange = changedAt();
       this.refresh(cx);
     }
+    this.takeScmCommand(cx);
+  },
+
+  // Menu commands (Open Changes, Stage, ...) arrive on a shared key: checked every COMMAND_MS.
+  takeScmCommand(cx) {
     const cmd = shared(COMMAND_KEY);
     if (cmd?.owner !== this.uid || cmd.id === this.seenCmd) {
       return;
     }
     this.seenCmd = cmd.id;
     this.runCmd(cmd, cx);
+    cx.notify();
   },
 
   applyStatus(top, context, results) {

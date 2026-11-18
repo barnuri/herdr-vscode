@@ -14,6 +14,7 @@ import { logInfo, logError, toast } from "./log.js";
 const MOD = "herdr-vscode-files";
 const BLAME_W = 230;
 const POLL_MS = 2000;
+const FOLLOW_MS = 100;
 const AUTOSAVE_TICK_MS = 250;
 const MAX_LINES = 20000;
 const MAX_LEXED_LINES = 6000;
@@ -114,6 +115,8 @@ export const previewMethods = {
     if (initProps.history === HISTORY_FILE || initProps.history === HISTORY_LINE) {
       this.wantHistory = initProps.history;
     }
+    // The previewed file is cheap to check: follow a click at once, re-read the file every POLL_MS.
+    cx.timer.every(FOLLOW_MS, (cx) => this.syncPreview(cx));
     cx.timer.every(POLL_MS, (cx) => this.syncPreview(cx, true));
     cx.timer.every(AUTOSAVE_TICK_MS, (cx) => {
       this.autoSaveTick(cx);
