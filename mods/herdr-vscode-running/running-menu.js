@@ -35,7 +35,8 @@ class RunningMenu {
       return;
     }
     if (rows.length === 1 && !confirmKill) {
-      run("pane.close", { pane: rows[0].pane });
+      const [step] = RunningMenu.closeAction(rows).steps;
+      run(step.command, step.args);
       return;
     }
     askConfirm(RunningMenu.MOD, {
