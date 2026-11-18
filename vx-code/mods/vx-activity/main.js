@@ -27,6 +27,7 @@ class VxActivity extends View {
   static MENU_ROW_PX = 26;
   static MENU_PAD_PX = 12;
   static DROP_BAR_PX = 2;
+  static END_TARGET = "end";
   static DEFAULT_ACCENT_FOREGROUND = "#ffffff";
   static COLOR_PREFIX = "#";
   static VIEWS = [
@@ -243,7 +244,8 @@ class VxActivity extends View {
 
   moveView(from, to) {
     const ids = this.orderedViews().map((view) => view.id).filter((id) => id !== from);
-    ids.splice(ids.indexOf(to), 0, from);
+    const index = to === VxActivity.END_TARGET ? ids.length : ids.indexOf(to);
+    ids.splice(index, 0, from);
     VxActivity.savePrefs({ order: ids });
   }
 
@@ -255,6 +257,9 @@ class VxActivity extends View {
         this.openVisibilityMenu();
       })
       .on_mouse_down("left", () => {
+        if (id === VxActivity.END_TARGET) {
+          return;
+        }
         this.drag = id;
         this.dropTarget = null;
       })
@@ -322,9 +327,9 @@ class VxActivity extends View {
         cx.stop_propagation();
         this.openVisibilityMenu();
       })
-      .children(this.orderedViews().filter((view) => present.has(view.id) && (!hidden.has(view.id) || on === view.id))
+      .children(this.orderedViews().filter((view) => present.has(view.id) && !hidden.has(view.id))
         .map((view) => this.draggable(this.item(t, view.id, view.icon, view.title, on === view.id, () => this.click(view.id), badges[view.id] ?? null), t, view.id)))
-      .child(div().flex_1())
+      .child(this.draggable(div().id("act-end").w_full().flex_1().relative(), t, VxActivity.END_TARGET))
       .child(this.item(t, "graph", "git-commit", "Commit Graph of the context repo", false, (cx) => this.openGraph(cx), null))
       .child(this.item(t, "settings", "gear", "Settings", false, () => run("app.settings"), null));
   }
