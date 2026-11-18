@@ -20,7 +20,7 @@ export default class VxIcons extends View {
   render() {
     const t = theme();
     return v_flex().id("vx-icons").size_full().p(10).gap(4).bg(t.background).text_color(t.foreground).text_size(TEXT.body)
-      .child(div().text_size(TEXT.caption).text_color(t.dim).child(this.table ? "Material Icon Theme (MIT)" : "Loading…"))
+      .child(div().text_size(TEXT.caption).text_color(t.dim).child(this.table ? "vscode-icons (MIT)" : "Loading…"))
       .children(VxIcons.SAMPLES.map(([name, dir]) => h_flex().id(`s-${name}`).h(24).gap(8).items_center()
         .child(FileIcon(this.table, name, { dir })).child(div().child(name))));
   }

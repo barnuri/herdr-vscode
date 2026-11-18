@@ -1,17 +1,15 @@
-// Which Material Icon Theme picture a file or folder gets, by VS Code's rules: names match
-// case-insensitively; a path rule beats a name, a name beats an extension, the longest extension wins.
+// vscode-icons picks by VS Code's rules: names match case-insensitively; a path rule beats a name,
+// a name beats an extension, the longest extension wins.
 
 export const ICON_DIR = "mods/vx-icons/icons";
 
 const PATH_RULE_DEPTH = 3;
-const LIGHT_SUFFIX = "_light";
 const LUMA_WEIGHTS = [0.299, 0.587, 0.114];
 const HEX_CHANNEL_OFFSETS = [0, 2, 4];
 const LIGHT_LUMA_THRESHOLD = 128;
 const HEX_RADIX = 16;
 
 const strip = (name) => name.replace(/^__(.+)__$/, "$1").replace(/^[._-]/, "");
-const openOf = (id) => (id.endsWith(LIGHT_SUFFIX) ? `${id.slice(0, -LIGHT_SUFFIX.length)}-open${LIGHT_SUFFIX}` : `${id}-open`);
 
 function pathRuleId(parts, find) {
   for (let i = Math.max(0, parts.length - PATH_RULE_DEPTH); i < parts.length - 1; i++) {
@@ -40,12 +38,12 @@ export function iconFor(table, path, { dir = false, open = false, light = false 
   const get = (kind, key) => (light ? table.light?.[kind]?.[key] : undefined) ?? table[kind]?.[key];
   const parts = String(path).toLowerCase().split("/").filter(Boolean);
   const name = parts.at(-1) ?? "";
-  const kind = dir ? "folderNames" : "fileNames";
+  const kind = dir ? (open ? "folderNamesExpanded" : "folderNames") : "fileNames";
   const find = (key) => get(kind, key) ?? (dir ? get(kind, strip(key)) : undefined);
   const pathId = pathRuleId(parts, find);
   if (dir) {
-    const id = pathId ?? find(name) ?? table.folder;
-    return `${ICON_DIR}/${open ? openOf(id) : id}.svg`;
+    const fallback = open ? (light ? table.light?.folderOpen : undefined) ?? table.folderOpen : (light ? table.light?.folder : undefined) ?? table.folder;
+    return `${ICON_DIR}/${pathId ?? find(name) ?? fallback}.svg`;
   }
   const id = pathId ?? get(kind, name) ?? extensionId(name, get);
   return `${ICON_DIR}/${id ?? table.file}.svg`;

@@ -35,6 +35,11 @@ test("yaml and json keys, shell comments", () => {
 
 test("icon lookup against the built table", () => {
   const table = JSON.parse(readFileSync(new URL("../mods/vx-icons/icons.json", import.meta.url), "utf8"));
-  assert.match(iconFor(table, "package.json"), /nodejs\.svg$/);
-  assert.match(iconFor(table, "src", { dir: true, open: true }), /folder-src-open\.svg$/);
+  assert.match(iconFor(table, "package.json"), /f_npm\.svg$/);
+  assert.match(iconFor(table, "src", { dir: true, open: true }), /fd_src_open\.svg$/);
+  assert.match(iconFor(table, "src", { dir: true }), /fd_src\.svg$/);
+  assert.match(iconFor(table, "index.d.ts"), /f_typescriptdef\.svg$/);
+  assert.match(iconFor(table, "main.py"), /f_python\.svg$/);
+  assert.match(iconFor(table, "unknown.zzz"), /\/file\.svg$/);
+  assert.match(iconFor(table, "nothing-here", { dir: true, open: true }), /\/folder_open\.svg$/);
 });
