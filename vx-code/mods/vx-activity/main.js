@@ -24,6 +24,7 @@ class VxActivity extends View {
     { id: "search", icon: "search", title: "Search (⌘⇧F)", name: "Search" },
     { id: "scm", icon: "branch", title: "Source Control (⌘⇧G)", name: "Source Control" },
     { id: "ci", icon: "ci", title: "CI / CD", name: "CI / CD" },
+    { id: "running", icon: "play", title: "Running (⌘⇧R)", name: "Running" },
     { id: "spaces", icon: "layers", title: "Spaces", name: "Spaces" },
     { id: "agents", icon: "bot", title: "Agents", name: "Agents" },
   ];
@@ -145,6 +146,7 @@ class VxActivity extends View {
       scm: changed ? String(changed > VxActivity.BADGE_MAX ? `${VxActivity.BADGE_MAX}+` : changed) : null,
       ci: ciDot,
       agents: waiting ? String(waiting) : null,
+      running: waiting ? String(waiting) : null,
     };
   }
 

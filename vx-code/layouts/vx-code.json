@@ -135,6 +135,13 @@
                   }
                 },
                 {
+                  "id": "running",
+                  "type": "block",
+                  "content": {
+                    "mod": "vx-running"
+                  }
+                },
+                {
                   "id": "spaces",
                   "type": "block",
                   "content": {

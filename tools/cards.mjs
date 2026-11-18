@@ -5,6 +5,7 @@ export const CARDS = {
   "vx-tabs": ["vx-tabs", "vx-scripts"],
   "vx-status": ["vx-status"],
   "vx-icons": ["vx-icons"],
+  "vx-running": ["vx-running"],
 };
 
 export const LAYOUT_CARDS = {
@@ -20,6 +21,7 @@ export const LAYOUT_CARDS = {
         "cmd-shift-f": "vx-activity.search",
         "cmd-shift-e": "vx-activity.explorer",
         "cmd-shift-g": "vx-activity.scm",
+        "cmd-shift-r": "vx-activity.running",
         "cmd-j": "vx-activity.panel",
         "ctrl-`": "vx-activity.panel",
         "cmd-e": "vx-tabs.switch",
