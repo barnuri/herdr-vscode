@@ -4,7 +4,7 @@ import { theme, readTextFile, writeTextFile, exec } from "herdr";
 import { git, bump } from "./ws.js";
 import { splitHunks, hunkPatch } from "./scm-core.js";
 import { READ, diffRows, splitRows, lineStartOffset } from "./git-core.js";
-import { lexCached, languageOf, syntaxColors, editorSyntax } from "./syntax-core.js";
+import { lexCached, languageOf, syntaxColors, editorSyntax, editorLanguageOf } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, codeLineHeight, tabSpaces, codeWrap, tint, SPIN_MS } from "./ui.js";
 import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
 import { linksIn, watchLinks, linkedRunChildren } from "./links.js";
@@ -302,7 +302,7 @@ export const diffMethods = {
   openWorkingEditor(target, text, cx) {
     const colors = syntaxColors(theme());
     this.editor = EditorState.new({
-      language: languageOf(target.path) ?? undefined, value: text, font_family: codeFont(), font_size: codeSize(), soft_wrap: codeWrap(),
+      language: editorLanguageOf(target.path) ?? undefined, value: text, font_family: codeFont(), font_size: codeSize(), soft_wrap: codeWrap(),
       syntax: editorSyntax(colors),
     });
     this.saved = text;

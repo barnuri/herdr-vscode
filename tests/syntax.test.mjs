@@ -85,3 +85,12 @@ test("LexCache lexes lazily and carries state; lexCached and sliceRuns", () => {
   assert.equal(lexCached("const a", "js"), lexCached("const a", "js"));
   assert.deepEqual(sliceRuns([{ text: "abc", kind: "k" }, { text: "def", kind: null }], 2, 4), [{ text: "c", kind: "k" }, { text: "d", kind: null }]);
 });
+
+test("editorLanguageOf names languages the way the built-in editor knows them", async () => {
+  const { editorLanguageOf } = await import("../shared/syntax-core.js");
+  assert.equal(editorLanguageOf("README.md"), "markdown");
+  assert.equal(editorLanguageOf("src/a.ts"), "typescript");
+  assert.equal(editorLanguageOf("src/a.tsx"), "tsx");
+  assert.equal(editorLanguageOf("lib.rs"), "rust");
+  assert.equal(editorLanguageOf("Dockerfile"), "bash");
+});

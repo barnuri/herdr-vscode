@@ -1011,11 +1011,31 @@ export function sliceRuns(runs, from, to) {
   return out;
 }
 
+// The built-in editor (tree-sitter) knows languages by full name: "md" or "ts" alone get no
+// highlighting, so it is named from the file extension, not from our lexer's language.
+const EDITOR_LANGUAGE_BY_EXTENSION = {
+  rs: "rust", js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript", ts: "typescript", mts: "typescript", cts: "typescript",
+  tsx: "tsx", py: "python", pyi: "python", go: "go", json: "json", jsonc: "json", json5: "json", yml: "yaml", yaml: "yaml", toml: "toml",
+  md: "markdown", markdown: "markdown", mdx: "markdown", sh: "bash", bash: "bash", zsh: "bash", env: "bash", css: "css", scss: "css", less: "css",
+  html: "html", htm: "html", xml: "html", svg: "html", sql: "sql", c: "c", h: "c", cc: "cpp", cpp: "cpp", hpp: "cpp", java: "java",
+  rb: "ruby", zig: "zig", graphql: "graphql", proto: "proto", diff: "diff", patch: "diff", mk: "make",
+};
+const EDITOR_LANGUAGE_BY_OURS = { sh: "bash", docker: "bash", make: "make", js: "javascript", py: "python", rs: "rust", md: "markdown" };
+
+export function editorLanguageOf(path) {
+  const name = String(path ?? "").split("/").pop().toLowerCase();
+  const extension = name.includes(".") ? name.split(".").pop() : "";
+  return EDITOR_LANGUAGE_BY_EXTENSION[extension] ?? EDITOR_LANGUAGE_BY_OURS[languageOf(path)] ?? languageOf(path) ?? null;
+}
+
 // The built-in editor's semantic colors (EditorState `syntax`) from our token colors.
 export const editorSyntax = (colors) => ({
   keyword: colors.keyword, string: colors.string, comment: colors.comment, function: colors.fn, type: colors.type,
   number: colors.number, constant: colors.constvar, boolean: colors.constant, variable: colors.variable,
   "string.escape": colors.escape, operator: colors.operator, punctuation: colors.operator,
+  title: colors.heading, "emphasis.strong": colors.bold, emphasis: colors.bold, "text.literal": colors.raw,
+  link_text: colors.link, link_uri: colors.link, "punctuation.list_marker": colors.list, "punctuation.special": colors.list,
+  property: colors.property, tag: colors.tag, attribute: colors.attr, label: colors.key,
 });
 
 // A herdr-vscode-* theme shows VS Code's own token colors; any other theme maps to its ANSI colors.
