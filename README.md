@@ -116,9 +116,19 @@ recipe: `herdr-vscode-workspace/` (Explorer + preview tab), `herdr-vscode-change
 
 ### Theme
 
-One Monokai is in Settings › Look once `themes/one-monokai.json` is in `~/.config/herdr-app/themes/`
-(`sync.sh` puts it there), or set `"theme": "one-monokai"` in `settings.json`. herdr-vscode works with any
-theme, light ones too.
+The herdr-vscode layout uses VS Code's own themes: **VS Code Dark Modern** in dark mode and **VS Code
+Light Modern** in light mode (`themes/herdr-vscode-dark-modern.json`, `herdr-vscode-light-modern.json`;
+**VS Code Dark+** is there too). They are built from the installed VS Code's theme files with
+`node tools/build-vscode-themes.mjs`, which also writes VS Code's token colors for code views
+(`shared/vscode-syntax-core.js`). One Monokai is in Settings › Look as well. herdr-vscode works with any
+theme, light ones too. A `colors` override in Herdr's `settings.json` (for example `accent`) still wins
+over the theme.
+
+**Import your VS Code settings** once: `node tools/import-vscode-settings.mjs` writes the editor font,
+size, line height, tab size, word wrap, Source Control view mode, diff layout and auto save into
+`~/.config/herdr-vscode/settings.json`. Add `--herdr` to also set Herdr's terminal font
+(`font`, `font_size`, `terminal_line_height`, `font_ligatures` in `~/.config/herdr-app/settings.json`);
+`--dry-run` only prints. It reads only the keys it maps, never tokens or secrets.
 
 ### Keys (herdr-vscode)
 
@@ -142,7 +152,7 @@ toggles CI.
 ## Settings
 
 Your choices (activity bar order and hidden icons, Source Control view and diff layout, auto save,
-blame, hidden files, tree indent and indent guides, search options, Git History branches, CI filters, panel tab, Pending Repos)
+blame, editor font/size/line height/tab size/word wrap, hidden files, tree indent and indent guides, search options, Git History branches, CI filters, panel tab, Pending Repos)
 are saved in `~/.config/herdr-vscode/settings.json`, one section per feature. You can edit the file
 by hand; the list of keys and defaults is in [CLAUDE.md](CLAUDE.md).
 

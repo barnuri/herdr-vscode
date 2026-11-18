@@ -5,7 +5,7 @@ import { git, bump } from "./ws.js";
 import { parseBlame, heat, shortAge, NOT_COMMITTED } from "./blame-core.js";
 import { parseLog, LOG_FORMAT, parseHunks } from "./git-core.js";
 import { lexLines, languageOf, syntaxColors } from "./syntax-core.js";
-import { TEXT, Icon, IconButton, FileIcon, Message, codeFont, codeSize, tint } from "./ui.js";
+import { TEXT, Icon, IconButton, FileIcon, Message, codeFont, codeSize, codeLineHeight, tabSpaces, codeWrap, tint } from "./ui.js";
 import { viewerValue, viewerTab, keptTabs, showInViewer } from "./tabs.js";
 import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
@@ -18,14 +18,12 @@ const FOLLOW_MS = 100;
 const AUTOSAVE_TICK_MS = 250;
 const MAX_LINES = 20000;
 const MAX_LEXED_LINES = 6000;
-const TAB_SPACES = "    ";
 const MAX_CACHE_NAME = 150;
 const FILE_HISTORY_COUNT = 100;
 const LINE_HISTORY_COUNT = 50;
 const MS_PER_SECOND = 1000;
 const ISO_DATE_LENGTH = 10;
 const SHORT_SHA = 8;
-const LINE_HEIGHT_RATIO = 1.55;
 const GUTTER_RATIO = 3.6;
 const GUTTER_PAD_RATIO = 0.9;
 const CHAR_WIDTH_RATIO = 0.62;
@@ -320,7 +318,7 @@ export const previewMethods = {
       this.saved = text;
     }
     this.text = text;
-    const all = text.replace(/\r/g, "").replace(/\t/g, TAB_SPACES).split("\n");
+    const all = text.replace(/\r/g, "").replace(/\t/g, tabSpaces()).split("\n");
     this.lines = all.slice(0, MAX_LINES);
     this.truncated = all.length > MAX_LINES;
     this.runs = this.lines.length <= MAX_LEXED_LINES ? lexLines(this.lines, languageOf(file.rel)) : null;
@@ -521,7 +519,7 @@ export const previewMethods = {
     const lines = this.lines ?? [];
     const blameOn = Boolean(this.blameOn && this.blame);
     const layout = {
-      colors: syntaxColors(t), size, height: Math.round(size * LINE_HEIGHT_RATIO), lines, lang: languageOf(this.file.rel), blameOn,
+      colors: syntaxColors(t), size, height: Math.round(size * codeLineHeight()), lines, lang: languageOf(this.file.rel), blameOn,
     };
     const listId = `pv-${this.fileKey}`;
     const widest = lines.reduce((longest, line) => Math.max(longest, line.length), 0);
@@ -575,7 +573,7 @@ export const previewMethods = {
     }
     const colors = syntaxColors(theme());
     this.editor = EditorState.new({
-      language: languageOf(this.file.rel) ?? undefined, value: this.text, font_family: codeFont(), font_size: codeSize(),
+      language: languageOf(this.file.rel) ?? undefined, value: this.text, font_family: codeFont(), font_size: codeSize(), soft_wrap: codeWrap(),
       syntax: { keyword: colors.keyword, string: colors.string, comment: colors.comment, function: colors.fn, type: colors.type, number: colors.number, constant: colors.constant },
     });
     this.saved = this.text;

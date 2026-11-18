@@ -35,6 +35,13 @@ Every user-facing setting, preference or toggle is stored with `shared/settings.
 | `explorer.showHidden` | `true` | Show hidden (dot) files in the Explorer and Files trees |
 | `explorer.indent` | `16` | Tree indent per level in px (0–40), Explorer, Files and Source Control trees |
 | `explorer.indentGuides` | `"always"` | Tree indent guides: `"always"`, `"onHover"` or `"none"` |
+| `editor.fontFamily` | Herdr's font | Code view font (preview, editor, diff, blame, hashes) |
+| `editor.fontSize` | Herdr's size | Code view font size |
+| `editor.lineHeight` | `1.55` | Code row height as a multiple of the font size |
+| `editor.tabSize` | `4` | Spaces per tab in previews and diffs |
+| `editor.wordWrap` | `false` | Soft wrap in the file editor |
+| `editor.fontLigatures`, `editor.renderWhitespace`, `editor.cursorStyle`, `editor.cursorBlink`, `editor.minimap` | VS Code's | Imported from VS Code; not applied (gpui's editor has no such options) |
+| `tabs.sizing`, `tabs.wrap`, `tabs.preview` | VS Code's | Imported from VS Code; not applied yet |
 | `search.caseSensitive` | `false` | Search: match case |
 | `search.word` | `false` | Search: whole word |
 | `search.regex` | `false` | Search: regular expression |
@@ -45,6 +52,10 @@ Every user-facing setting, preference or toggle is stored with `shared/settings.
 | `pending.auditScript` | `""` (bundled script) | Pending Repos audit script; falls back to its mod.json `settings` |
 | `pending.root` | `""` (`~/code`) | Pending Repos folder to scan; falls back to its mod.json `settings` |
 
+`node tools/import-vscode-settings.mjs` fills `editor`, `tabs`, `scm`, `files` and `explorer` from
+the user's VS Code settings (`--herdr`: also Herdr's terminal `font`). Settings change live: the
+activity mod watches the file.
+
 ## Exceptions: shared configs
 
 These settings stay in files that the Herdr plugins share, so one config drives both:
@@ -53,6 +64,9 @@ These settings stay in files that the Herdr plugins share, so one config drives 
   `~/.local/state/herdr-folders/state.json` (herdr-folders).
 - Projects: `~/.config/herdr/plugins/config/barnuri.project-manager/projects.json`.
 - Updates: `~/.config/herdr/plugins/config/barnuri.auto-update/config.json`.
+- Terminal font, size and line height: Herdr's own `~/.config/herdr-app/settings.json`.
+- Theme: the layout's root `theme` (the theme picker changes it); `themes/herdr-vscode-*.json` come
+  from `node tools/build-vscode-themes.mjs`.
 
 ## Rules
 

@@ -1,7 +1,7 @@
 // Every user setting of the herdr-vscode mods lives in ~/.config/herdr-vscode/settings.json, one
 // section per feature. Reads are synchronous from a shared() cache that loadSettings() fills;
 // setSetting() updates the cache and writes the file (read-modify-write, so other keys stay).
-import { shared, setShared, home, exec, readTextFile, writeTextFile, checking } from "herdr";
+import { shared, setShared, home, exec, readTextFile, writeTextFile, checking, watchFolder } from "herdr";
 import { logError } from "./log.js";
 import { parseSettings, readSetting, withSettings, formatSettings } from "./settings-core.js";
 
@@ -87,3 +87,22 @@ export function setSettings(section, values) {
 }
 
 export const setSetting = (section, key, value) => setSettings(section, { [key]: value });
+
+// Re-reads settings.json when it changes on disk (a hand edit, the VS Code importer), so every
+// view that reads getSetting() at render follows at once. One mod (activity) runs this.
+export function watchSettings(cx) {
+  if (checking()) {
+    return;
+  }
+  cx.spawn(async () => {
+    await exec("mkdir", ["-p", settingsDir()], { timeout: MKDIR_TIMEOUT_MS }).catch(() => null);
+    for (;;) {
+      try {
+        await watchFolder(settingsDir());
+      } catch {
+        return;
+      }
+      await loadSettings({ force: true });
+    }
+  });
+}

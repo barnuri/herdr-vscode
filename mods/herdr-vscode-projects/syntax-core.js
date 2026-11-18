@@ -1,6 +1,8 @@
 // A small lexer for colouring code rows, with no grammar: block comments and multi-line strings
 // carry from one line to the next. kinds: comment string number keyword type fn constant key tag
 
+import { VSCODE_SYNTAX } from "./vscode-syntax-core.js";
+
 const words = (list) => new Set(list.split(" "));
 const KEYWORDS = {
   js: words("abstract as async await break case catch class const continue debugger default delete do else enum export extends finally for from function get if implements import in instanceof interface is keyof let namespace new of private protected public readonly return satisfies set static super switch this throw try type typeof var void while with yield"),
@@ -306,7 +308,9 @@ export function lexLines(lines, lang) {
   });
 }
 
+// A herdr-vscode-* theme shows VS Code's own token colors; any other theme maps to its ANSI colors.
 export const syntaxColors = (t) => ({
   comment: t.dim, string: t.ansi2, number: t.ansi1, keyword: t.ansi5, type: t.ansi3,
   fn: t.ansi4, constant: t.ansi6, key: t.ansi1, tag: t.ansi1,
+  ...(VSCODE_SYNTAX[String(t.background ?? "").toLowerCase()] ?? {}),
 });

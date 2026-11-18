@@ -5,7 +5,7 @@ import { git, bump } from "./ws.js";
 import { splitHunks, hunkPatch } from "./scm-core.js";
 import { READ, diffRows, splitRows } from "./git-core.js";
 import { lexLine, languageOf, syntaxColors } from "./syntax-core.js";
-import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, tint, SPIN_MS } from "./ui.js";
+import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, codeLineHeight, tabSpaces, tint, SPIN_MS } from "./ui.js";
 import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
 import { toast } from "./log.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
@@ -19,12 +19,10 @@ const OLD_SPLIT_KEY = "split";
 const OLD_SPLIT_ON = "1";
 const DIFF_SPLIT = "split";
 const DIFF_INLINE = "inline";
-const TAB_SPACES = "    ";
 const SHORT_SHA = 8;
 const ERROR_TAIL = 400;
 const SUCCESS_TIMEOUT_MS = 2000;
 const ERROR_TIMEOUT_MS = 6000;
-const LINE_HEIGHT_FACTOR = 1.55;
 const NUMBER_WIDTH_FACTOR = 3;
 const MARK_WIDTH_FACTOR = 1.6;
 const HUNK_ROW = "@";
@@ -183,7 +181,7 @@ export const diffMethods = {
   applyLines(lines) {
     this.problem = null;
     this.truncated = lines.length > MAX_ROWS;
-    this.rows = diffRows(lines.slice(0, MAX_ROWS).map((line) => line.replace(/\t/g, TAB_SPACES)));
+    this.rows = diffRows(lines.slice(0, MAX_ROWS).map((line) => line.replace(/\t/g, tabSpaces())));
     let hunkCount = 0;
     for (const row of this.rows) {
       if (row.kind === HUNK_ROW) {
@@ -357,7 +355,7 @@ export const diffMethods = {
     const syntax = syntaxColors(colors);
     const lang = languageOf(target.path);
     const size = codeSize();
-    const height = Math.round(size * LINE_HEIGHT_FACTOR);
+    const height = Math.round(size * codeLineHeight());
     const items = this.split ? this.pairs : this.rows;
     const listId = `diff-${this.diffKey}-${this.split ? "s" : "i"}`;
     const itemKey = (index) => (items[index]?.kind === HUNK_ROW ? `${HUNK_KEY_PREFIX}${items[index].hunk}` : `r${index}`);

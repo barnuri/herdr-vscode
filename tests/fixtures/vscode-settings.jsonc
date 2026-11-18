@@ -1,0 +1,17 @@
+// A made-up VS Code settings.json (JSONC) for tests: no real user data.
+{
+  "workbench.colorTheme": "Dark+",
+  "window.autoDetectColorScheme": true,
+  "editor.fontFamily": "'Fira Code', Menlo, monospace",
+  "editor.fontSize": 14,
+  "editor.lineHeight": 21,
+  "editor.tabSize": 2,
+  "editor.minimap.enabled": false,
+  "terminal.integrated.fontFamily": "Example Mono Nerd Font",
+  "terminal.integrated.lineHeight": 3,
+  "scm.defaultViewMode": "tree",
+  "diffEditor.renderSideBySide": false,
+  "files.autoSave": "onFocusChange",
+  "workbench.tree.indent": 20,
+  "github.copilot.token": "not-a-real-token",
+}

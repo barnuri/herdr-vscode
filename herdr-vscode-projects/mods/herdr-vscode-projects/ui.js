@@ -3,12 +3,18 @@ import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, settings } from "herdr";
 import { iconFor, isLight } from "./icons-core.js";
+import { getSetting } from "./settings.js";
 
 export const TEXT = { tiny: 10, caption: 11, small: 12, body: 13, title: 14 };
 export const SPIN_MS = 900;
 export const UI = (name) => `mods/herdr-vscode-icons/ui/${name}.svg`;
 const DEFAULT_CODE_FONT = "JetBrains Mono";
 const DEFAULT_CODE_SIZE = 14;
+const DEFAULT_LINE_HEIGHT = 1.55;
+const MIN_LINE_HEIGHT = 1;
+const MAX_LINE_HEIGHT = 3;
+const DEFAULT_TAB_SIZE = 4;
+const MAX_TAB_SIZE = 8;
 const DEFAULT_TINT_ALPHA = "26";
 const HEX_COLOR = /^#[0-9a-f]{6}/i;
 const HEX_RGB_LENGTH = 7;
@@ -22,8 +28,12 @@ const DOT_SIZE = 7;
 const HOVER_OPACITY = 0.88;
 const HIDDEN_CONFIRM_ARGS = /^(core|diff)\./;
 
-export const codeFont = () => settings().font_family ?? DEFAULT_CODE_FONT;
-export const codeSize = () => settings().font_size ?? DEFAULT_CODE_SIZE;
+// Code views follow settings.json "editor" (imported from VS Code), else Herdr's font.
+export const codeFont = () => getSetting("editor", "fontFamily", "") || settings().font_family || DEFAULT_CODE_FONT;
+export const codeSize = () => Number(getSetting("editor", "fontSize", 0)) || settings().font_size || DEFAULT_CODE_SIZE;
+export const codeLineHeight = () => Math.min(MAX_LINE_HEIGHT, Math.max(MIN_LINE_HEIGHT, Number(getSetting("editor", "lineHeight", DEFAULT_LINE_HEIGHT)) || DEFAULT_LINE_HEIGHT));
+export const tabSpaces = () => " ".repeat(Math.min(MAX_TAB_SIZE, Math.max(1, Number(getSetting("editor", "tabSize", DEFAULT_TAB_SIZE)) || DEFAULT_TAB_SIZE)));
+export const codeWrap = () => getSetting("editor", "wordWrap", false) === true;
 export const tint = (color, alpha = DEFAULT_TINT_ALPHA) => (HEX_COLOR.test(color ?? "") ? `${color.slice(0, HEX_RGB_LENGTH)}${alpha}` : color);
 
 export const Icon = (name, size = ICON_SIZE) => svg(UI(name)).size(size).flex_none();

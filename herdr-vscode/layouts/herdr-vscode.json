@@ -1,6 +1,10 @@
 {
   "id": "root",
   "type": "column",
+  "theme": {
+    "dark": "herdr-vscode-dark-modern",
+    "light": "herdr-vscode-light-modern"
+  },
   "preview": "layouts/herdr-vscode.svg",
   "titlebar": "none",
   "traffic_lights": [

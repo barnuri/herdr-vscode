@@ -8,7 +8,7 @@ import { findNode } from "./layout-core.js";
 import { extensions, scanExtensions, publishExtensions, modsDir } from "./extensions.js";
 import { mergeViews, badgeText, stackChild, withStackChild } from "./extensions-core.js";
 import { toast } from "./log.js";
-import { loadSettings, getSetting, setSetting, setSettings } from "./settings.js";
+import { loadSettings, getSetting, setSetting, setSettings, watchSettings } from "./settings.js";
 
 class HerdrVscodeActivity extends View {
   static STACK = "sidebar-views";
@@ -70,6 +70,7 @@ class HerdrVscodeActivity extends View {
       cx.notify();
     });
     this.watchExtensions(cx);
+    watchSettings(cx);
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();

@@ -14,7 +14,7 @@ export const LAYOUT_CARDS = {
     layout: "herdr-vscode",
     // These open at runtime (graph tabs, the herdr-vscode-updates extension), so the layout does not name them.
     extra: ["herdr-vscode-graph", "herdr-vscode-updates"],
-    themes: ["one-monokai"],
+    themes: ["one-monokai", "herdr-vscode-dark-plus", "herdr-vscode-dark-modern", "herdr-vscode-light-modern"],
     keys: {
       "layout:herdr-vscode": {
         "cmd-p": "herdr-vscode-titlebar.goto",
