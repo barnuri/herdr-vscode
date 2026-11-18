@@ -11,6 +11,7 @@ import ContextMenu from "./context-menu.js";
 import { parseAudit, summaryText } from "./pending-core.js";
 import { toast, logError } from "./log.js";
 import { runAction } from "./actions.js";
+import { loadSettings, getSetting } from "./settings.js";
 
 class HerdrVscodePending extends View {
   static MOD = "herdr-vscode-pending";
@@ -18,7 +19,7 @@ class HerdrVscodePending extends View {
   static STACK = "sidebar-views";
   static SIDEBAR = "sidebar";
   static BADGE_KEY = "herdr-vscode.pending.badge";
-  // The audit script (read-only, never fetches): mod.json settings.auditScript, else the bundled copy.
+  // The audit script (read-only, never fetches): settings.json pending.auditScript, else mod.json settings.auditScript, else the bundled copy.
   static BUNDLED_SCRIPT = "repo_pending_audit.py";
   static DEFAULT_ROOT = "~/code";
   static COPIED_TOAST_MS = 1500;
@@ -39,8 +40,9 @@ class HerdrVscodePending extends View {
     return path.replace(/^~(?=\/|$)/, home());
   }
 
-  // Settings live in the installed mod.json ("settings"), which sync.sh keeps across updates.
+  // settings.json "pending" wins; the installed mod.json "settings" (kept by sync.sh) is the fallback.
   static async scanSettings() {
+    await loadSettings();
     const dir = `${appHome()}/mods/${HerdrVscodePending.MOD}`;
     const text = await readTextFile(`${dir}/mod.json`).catch(() => null);
     let settings = {};
@@ -49,8 +51,9 @@ class HerdrVscodePending extends View {
     } catch (error) {
       logError(HerdrVscodePending.MOD, "mod.json is not valid JSON", String(error));
     }
-    const script = settings.auditScript ? HerdrVscodePending.expandHome(settings.auditScript) : `${dir}/${HerdrVscodePending.BUNDLED_SCRIPT}`;
-    return { script, root: settings.root || HerdrVscodePending.DEFAULT_ROOT };
+    const auditScript = getSetting("pending", "auditScript", "") || settings.auditScript;
+    const script = auditScript ? HerdrVscodePending.expandHome(auditScript) : `${dir}/${HerdrVscodePending.BUNDLED_SCRIPT}`;
+    return { script, root: getSetting("pending", "root", "") || settings.root || HerdrVscodePending.DEFAULT_ROOT };
   }
 
   static spaceAt(path) {

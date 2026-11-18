@@ -12,6 +12,7 @@ import { findNode } from "./layout-core.js";
 import { logInfo, toast } from "./log.js";
 import { askConfirm, confirmMethods } from "./actions.js";
 import { isUntitledName, untitledDirtyKey, nextUntitledNumber, UNTITLED_PREFIX, UNTITLED_COUNTER_KEY, isEmptyEditorTab, closeDetail } from "./untitled-core.js";
+import { whenSettings } from "./settings.js";
 
 class HerdrVscodeTabs extends View {
   static MOD = "herdr-vscode-tabs";
@@ -128,6 +129,7 @@ class HerdrVscodeTabs extends View {
 
   init(given, cx) {
     const options = props() ?? given ?? {};
+    whenSettings(cx);
     if (options.confirm) {
       this.confirmSpec = options.confirm;
       this.confirmFocus = cx.focus_handle();

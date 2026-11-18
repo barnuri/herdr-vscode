@@ -7,7 +7,8 @@ import { parseLog, LOG_FORMAT, parseHunks } from "./git-core.js";
 import { lexLines, languageOf, syntaxColors } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, codeFont, codeSize, tint } from "./ui.js";
 import { viewerValue, viewerTab, keptTabs, showInViewer } from "./tabs.js";
-import { AUTOSAVE_KEY, autoSaveDue } from "./fileops-core.js";
+import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 import { logInfo, logError, toast } from "./log.js";
 
 const MOD = "herdr-vscode-files";
@@ -37,7 +38,8 @@ const HEAT_STEPS = [[0.9, "ansi1"], [0.7, "ansi3"], [0.45, "ansi2"], [0.2, "ansi
 const DIRTY_KEY = "herdr-vscode.dirty";
 const KEPT_KEY = "herdr-vscode.tabs.kept";
 const VIEW_KEY = `${MOD}.view`;
-const BLAME_KEY = "blame";
+// Before settings.json the blame toggle lived in this mod's localStorage: still the default.
+const OLD_BLAME_KEY = "blame";
 const HISTORY_FILE = "file";
 const HISTORY_LINE = "line";
 const UNTRACKED_HUNK = { newStart: 1, fresh: Infinity, kind: "added" };
@@ -97,7 +99,15 @@ export const previewMethods = {
     // A kept tab (props.fixed) shows its own file and never follows the space's preview.
     this.fixed = Boolean(initProps.fixed && this.propsFile);
     this.mdCode = false;
-    this.blameOn = initProps.blame === true || localStorage.getItem(BLAME_KEY) === "1";
+    this.blameOn = initProps.blame === true || getSetting("files", "blame", localStorage.getItem(OLD_BLAME_KEY) === "1") === true;
+    whenSettings(cx, (cx) => {
+      if (!this.blameOn && getSetting("files", "blame", localStorage.getItem(OLD_BLAME_KEY) === "1") === true) {
+        this.blameOn = true;
+        if (this.file) {
+          this.loadBlame(cx);
+        }
+      }
+    });
     if (Number.isInteger(initProps.line)) {
       this.selLine = initProps.line;
     }
@@ -264,7 +274,7 @@ export const previewMethods = {
       return;
     }
     const dirty = this.editor.value() !== this.saved;
-    if (autoSaveDue({ mode: shared(AUTOSAVE_KEY), dirty, writable: this.writable, editedAt: this.editedAt ?? 0, now: Date.now(), blurred: leaving })) {
+    if (autoSaveDue({ mode: getSetting("files", "autoSave", AUTOSAVE_DEFAULT), dirty, writable: this.writable, editedAt: this.editedAt ?? 0, now: Date.now(), blurred: leaving })) {
       this.save(cx, { quiet: true });
     }
   },
@@ -342,7 +352,7 @@ export const previewMethods = {
 
   toggleBlame(cx) {
     this.blameOn = !this.blameOn;
-    localStorage.setItem(BLAME_KEY, this.blameOn ? "1" : "0");
+    setSetting("files", "blame", this.blameOn);
     if (this.blameOn) {
       this.loadBlame(cx);
     }

@@ -10,13 +10,15 @@ import { RepoButton } from "./repo-picker.js";
 import { askConfirm, runAction } from "./actions.js";
 import { openScmMenu, openScmAsk } from "./scm-popups.js";
 import { toast, logError } from "./log.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 
 const MOD = "herdr-vscode-changes";
 const HISTORY_PART = "history";
 const FILES_MOD = "herdr-vscode-files";
 const COMMAND_KEY = "herdr-vscode.changes.cmd";
 const CLOSED_KEY = "closed";
-const VIEW_KEY = "view";
+// Before settings.json "View as Tree/List" lived in localStorage: still the default.
+const OLD_VIEW_KEY = "view";
 const VIEW_TREE = "tree";
 const VIEW_FLAT = "flat";
 const VIEW_COMMAND = "view";
@@ -131,7 +133,11 @@ export const panelMethods = {
     } catch {
       this.closed = new Set();
     }
-    this.view = localStorage.getItem(VIEW_KEY) === VIEW_TREE ? VIEW_TREE : VIEW_FLAT;
+    const viewOf = (fallback) => (getSetting("scm", "view", fallback) === VIEW_TREE ? VIEW_TREE : VIEW_FLAT);
+    this.view = viewOf(localStorage.getItem(OLD_VIEW_KEY));
+    whenSettings(cx, () => {
+      this.view = viewOf(this.view);
+    });
     this.amend = false;
     this.ahead = 0;
     this.behind = 0;
@@ -242,7 +248,7 @@ export const panelMethods = {
 
   setView(view, cx) {
     this.view = view;
-    localStorage.setItem(VIEW_KEY, this.view);
+    setSetting("scm", "view", this.view);
     cx.notify();
   },
 

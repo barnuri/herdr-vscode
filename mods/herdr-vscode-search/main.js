@@ -6,6 +6,7 @@ import { grepArgs, parseGrep, matchSnippet } from "./search-core.js";
 import { showInViewer } from "./tabs.js";
 import { TEXT, Icon, FileIcon, RootIcon, tint } from "./ui.js";
 import { loadIcons } from "./icons.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 
 export default class HerdrVscodeSearch extends View {
   static ROW_HEIGHT = 22;
@@ -21,7 +22,7 @@ export default class HerdrVscodeSearch extends View {
   static SNIPPET_CONTEXT = 12;
   static HIT_ALPHA = "40";
   static OPTION_ALPHA = "33";
-  static OPTS_KEY = "opts";
+  static OLD_OPTS_KEY = "opts";
 
   static escapeRegex(text) {
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -48,8 +49,16 @@ export default class HerdrVscodeSearch extends View {
     loadIcons(this, cx);
     this.opts = { caseSensitive: false, word: false, regex: false };
     try {
-      Object.assign(this.opts, JSON.parse(localStorage.getItem(HerdrVscodeSearch.OPTS_KEY) ?? "{}"));
+      // Before settings.json the options lived in localStorage: still the defaults.
+      Object.assign(this.opts, JSON.parse(localStorage.getItem(HerdrVscodeSearch.OLD_OPTS_KEY) ?? "{}"));
     } catch {}
+    const fromSettings = () => {
+      for (const key of Object.keys(this.opts)) {
+        this.opts[key] = getSetting("search", key, this.opts[key]) === true;
+      }
+    };
+    fromSettings();
+    whenSettings(cx, fromSettings);
     this.collapsed = new Set();
     this.showInclude = false;
     this.query = InputState.new({ placeholder: "Search" });
@@ -75,9 +84,7 @@ export default class HerdrVscodeSearch extends View {
 
   toggle(key, cx) {
     this.opts[key] = !this.opts[key];
-    try {
-      localStorage.setItem(HerdrVscodeSearch.OPTS_KEY, JSON.stringify(this.opts));
-    } catch {}
+    setSetting("search", key, this.opts[key]);
     this.runSearch(cx);
   }
 

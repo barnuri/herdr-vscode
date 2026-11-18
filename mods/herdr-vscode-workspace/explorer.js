@@ -4,6 +4,7 @@ import { exec, shared } from "herdr";
 import { active, setActive, git } from "./ws.js";
 import { TEXT, Icon, FileIcon, RootIcon, markColor } from "./ui.js";
 import { showInViewer } from "./tabs.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 
 const ROW = 22;
 const INDENT = 12;
@@ -16,7 +17,8 @@ const NAME_PREFIX_SCORE = 3;
 const NAME_HIT_SCORE = 2;
 const PATH_HIT_SCORE = 1;
 const TRANSPARENT = "#00000000";
-const DOTS_KEY = "dots";
+// Before settings.json "show hidden files" lived in localStorage: still the default.
+const OLD_DOTS_KEY = "dots";
 const VIEWER_MOD = "herdr-vscode-files";
 const HIDDEN = new Set([".git", ".DS_Store"]);
 // "d|f", name pairs, null-separated; the folder is $1, never part of the script text.
@@ -101,14 +103,17 @@ function note(t, text) {
 }
 
 export const explorerMethods = {
-  initExplorer() {
+  initExplorer(cx) {
     this.entries = new Map();
     this.open = new Set();
     this.selected = null;
     this.drag = null;
     this.ignored = new Map();
     this.index = new Map();
-    this.showDots = localStorage.getItem(DOTS_KEY) !== "0";
+    this.showDots = getSetting("explorer", "showHidden", localStorage.getItem(OLD_DOTS_KEY) !== "0") !== false;
+    whenSettings(cx, () => {
+      this.showDots = getSetting("explorer", "showHidden", this.showDots) !== false;
+    });
   },
 
   async loadIgnored(root) {
@@ -135,7 +140,7 @@ export const explorerMethods = {
 
   toggleDots(cx) {
     this.showDots = !this.showDots;
-    localStorage.setItem(DOTS_KEY, this.showDots ? "1" : "0");
+    setSetting("explorer", "showHidden", this.showDots);
     cx.notify();
   },
 

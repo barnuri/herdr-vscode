@@ -10,6 +10,7 @@ import { askConfirm, confirmMethods } from "./actions.js";
 import { TEXT, Icon, ConfirmView, FileIcon, RootIcon } from "./ui.js";
 import { loadIcons } from "./icons.js";
 import { toast } from "./log.js";
+import { loadSettings, settingsLoaded, getSetting, setSetting } from "./settings.js";
 
 export default class HerdrVscodePanel extends View {
   static MOD = "herdr-vscode-panel";
@@ -44,7 +45,7 @@ export default class HerdrVscodePanel extends View {
 
   // Shared panel state: { view, shown: terminal address | null, list: [terminal address] }.
   static state() {
-    return { view: HerdrVscodePanel.TERMINAL, shown: null, list: [], ...(shared(HerdrVscodePanel.STATE_KEY) ?? {}) };
+    return { view: getSetting("panel", "view", HerdrVscodePanel.TERMINAL), shown: null, list: [], ...(shared(HerdrVscodePanel.STATE_KEY) ?? {}) };
   }
 
   static liveTerminals() {
@@ -103,6 +104,7 @@ export default class HerdrVscodePanel extends View {
       return;
     }
     this.tops = new Map();
+    loadSettings();
     cx.timer.every(HerdrVscodePanel.TIDY_MS, (cx) => this.tidy(cx));
     cx.timer.every(HerdrVscodePanel.PORT_COUNT_MS, (cx) => this.countPorts(cx));
     this.countPorts(cx);
@@ -188,6 +190,9 @@ export default class HerdrVscodePanel extends View {
 
   // Forgets shells that ended, and starts one when TERMINAL shows with none.
   tidy(cx) {
+    if (!settingsLoaded()) {
+      return;
+    }
     const bottom = this.bottom();
     const visible = Boolean(bottom && !bottom.hidden);
     const appeared = visible && !this.wasVisible;
@@ -203,6 +208,10 @@ export default class HerdrVscodePanel extends View {
     const shown = live.has(state.shown) ? state.shown : list[list.length - 1] ?? null;
     const next = { ...state, shown, list };
     const onTerminal = state.view === HerdrVscodePanel.TERMINAL;
+    // The activity bar and status bar switch the panel tab too: remember the user's last pick.
+    if (state.view !== getSetting("panel", "view", HerdrVscodePanel.TERMINAL)) {
+      setSetting("panel", "view", state.view);
+    }
     if (list.join() !== state.list.join() || shown !== state.shown) {
       setShared(HerdrVscodePanel.STATE_KEY, next);
       if (state.list.length && !list.length && visible && onTerminal) {

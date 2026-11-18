@@ -118,7 +118,7 @@ class HerdrVscodeWorkspace extends View {
     this.status = new Map();
     this.tops = new Map();
     this.width = HerdrVscodeWorkspace.INITIAL_WIDTH;
-    this.initExplorer();
+    this.initExplorer(cx);
     this.filter = "";
     this.filterState = InputState.new({ placeholder: "Filter files in the workspace" });
     this.filterState.on("change", (_event, cx) => {

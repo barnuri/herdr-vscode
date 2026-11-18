@@ -3,7 +3,8 @@ import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { theme, props, closeOverlay, spaces, run, shared, setShared } from "herdr";
 import { describeTab, tabIcon, repoColor } from "./kinds.js";
 import { TEXT, Icon } from "./ui.js";
-import { AUTOSAVE_KEY, AUTOSAVE_OFF, AUTOSAVE_AFTER_DELAY, autoSaveMode } from "./fileops-core.js";
+import { AUTOSAVE_DEFAULT, AUTOSAVE_OFF, AUTOSAVE_AFTER_DELAY, autoSaveMode } from "./fileops-core.js";
+import { getSetting, setSetting } from "./settings.js";
 
 const ROW = 32;
 const MAX_VISIBLE_ROWS = 12;
@@ -115,7 +116,7 @@ export const popupMethods = {
     const others = tabs.filter((tab) => tab.id !== menu.tab);
     const right = tabs.slice(index + 1);
     const pinned = Boolean(shared(PINNED_KEY)?.[menu.tab]);
-    const autoSaveOn = autoSaveMode(shared(AUTOSAVE_KEY)) !== AUTOSAVE_OFF;
+    const autoSaveOn = autoSaveMode(getSetting("files", "autoSave", AUTOSAVE_DEFAULT)) !== AUTOSAVE_OFF;
     return [
       menu.preview && { id: "keep", icon: "check", label: "Keep Open", run: () => postTabs({ cmd: "keep", tab: menu.tab }) },
       { id: "pin", icon: pinned ? "minus" : "up", label: pinned ? "Unpin" : "Pin", run: () => postTabs({ cmd: pinned ? "unpin" : "pin", tab: menu.tab }) },
@@ -126,7 +127,7 @@ export const popupMethods = {
       right.length && { id: "right", icon: "x", label: `Close to the Right (${right.length})`, twice: true, run: () => right.forEach((tab) => this.constructor.closeTab(tab, "menu Close to the Right")) },
       { id: "settle", icon: "archive", label: "Put Away (keeps running)", run: () => run("tab.settle", { id: menu.tab }) },
       { sep: true, id: "s2" },
-      { id: "autosave", icon: autoSaveOn ? "check" : "minus", label: autoSaveOn ? "Auto Save: on (after delay)" : "Auto Save: off", run: () => setShared(AUTOSAVE_KEY, autoSaveOn ? AUTOSAVE_OFF : AUTOSAVE_AFTER_DELAY) },
+      { id: "autosave", icon: autoSaveOn ? "check" : "minus", label: autoSaveOn ? "Auto Save: on (after delay)" : "Auto Save: off", run: () => setSetting("files", "autoSave", autoSaveOn ? AUTOSAVE_OFF : AUTOSAVE_AFTER_DELAY) },
     ].filter(Boolean);
   },
 

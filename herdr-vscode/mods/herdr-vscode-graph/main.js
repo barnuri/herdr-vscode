@@ -9,6 +9,7 @@ import { TEXT, Icon, IconButton, FileIcon, Message, markColor, codeFont } from "
 import { viewerValue, showInViewer } from "./tabs.js";
 import { loadIcons } from "./icons.js";
 import { logError } from "./log.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 
 class HerdrVscodeGraph extends View {
   static MOD = "herdr-vscode-graph";
@@ -24,7 +25,8 @@ class HerdrVscodeGraph extends View {
   static DETAIL_SHA = 10;
   static MS_PER_SECOND = 1000;
   static TRANSPARENT = "#00000000";
-  static KEY_ALL = "all";
+  // Before settings.json "all branches" lived in localStorage: still the default.
+  static OLD_KEY_ALL = "all";
 
   static laneColor(t, lane) {
     const palette = [t.accent, t.ansi2, t.ansi5, t.ansi3, t.ansi6, t.ansi4, t.ansi1];
@@ -67,7 +69,10 @@ class HerdrVscodeGraph extends View {
     this.space = initProps.space ?? null;
     this.tops = new Map();
     this.fixed = initProps.root ? { root: initProps.root, on: initProps.on ?? null } : null;
-    this.all = localStorage.getItem(HerdrVscodeGraph.KEY_ALL) !== "0";
+    this.all = getSetting("graph", "allBranches", localStorage.getItem(HerdrVscodeGraph.OLD_KEY_ALL) !== "0") !== false;
+    whenSettings(cx, () => {
+      this.all = getSetting("graph", "allBranches", this.all) !== false;
+    });
     loadIcons(this, cx);
     if (checking()) {
       return;
@@ -275,7 +280,7 @@ class HerdrVscodeGraph extends View {
 
   toggleAll(cx) {
     this.all = !this.all;
-    localStorage.setItem(HerdrVscodeGraph.KEY_ALL, this.all ? "1" : "0");
+    setSetting("graph", "allBranches", this.all);
     cx.notify();
   }
 

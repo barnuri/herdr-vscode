@@ -1,6 +1,5 @@
 // Pure rules for Explorer file operations, remote links and auto save (no Herdr imports, so tests run them).
 export const CLIPBOARD_KEY = "herdr-vscode.files.clipboard";
-export const AUTOSAVE_KEY = "herdr-vscode.files.autoSave";
 export const AUTOSAVE_OFF = "off";
 export const AUTOSAVE_AFTER_DELAY = "afterDelay";
 export const AUTOSAVE_DEFAULT = AUTOSAVE_AFTER_DELAY;

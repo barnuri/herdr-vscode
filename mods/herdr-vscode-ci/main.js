@@ -11,6 +11,7 @@ import { TEXT, Icon, IconButton, Badge, Button, Message, ConfirmView, stateLook,
 import { RepoButton, RepoMenu } from "./repo-picker.js";
 import { loadIcons } from "./icons.js";
 import { toast, logError } from "./log.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 
 export default class HerdrVscodeCi extends View {
   static MOD = "herdr-vscode-ci";
@@ -89,8 +90,18 @@ export default class HerdrVscodeCi extends View {
     this.tops = new Map();
     this.projects = new Map();
     this.subjects = new Map();
-    this.filter = localStorage.getItem("filter") ?? HerdrVscodeCi.ALL;
-    this.mine = localStorage.getItem("mine") !== "0";
+    // Before settings.json the filter and "mine" lived in localStorage: still the defaults.
+    this.filter = getSetting("ci", "filter", localStorage.getItem("filter") ?? HerdrVscodeCi.ALL);
+    this.mine = getSetting("ci", "mine", localStorage.getItem("mine") !== "0") !== false;
+    whenSettings(cx, (cx) => {
+      this.filter = getSetting("ci", "filter", this.filter);
+      const mine = getSetting("ci", "mine", this.mine) !== false;
+      if (mine !== this.mine) {
+        this.mine = mine;
+        this.runs = null;
+        this.loadRuns(cx);
+      }
+    });
     this.tab = "runs";
     if (checking()) {
       return;
@@ -390,7 +401,7 @@ export default class HerdrVscodeCi extends View {
       .hover((style) => style.bg(t.hover))
       .on_click((_e, cx) => {
         this.filter = id;
-        localStorage.setItem("filter", id);
+        setSetting("ci", "filter", id);
         cx.notify();
       })
       .child(label).child(div().text_color(t.dim).child(String(count)));
@@ -398,7 +409,7 @@ export default class HerdrVscodeCi extends View {
 
   toggleMine(cx) {
     this.mine = !this.mine;
-    localStorage.setItem("mine", this.mine ? "1" : "0");
+    setSetting("ci", "mine", this.mine);
     this.runs = null;
     this.loadRuns(cx);
     cx.notify();

@@ -8,13 +8,16 @@ import { lexLine, languageOf, syntaxColors } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, tint, SPIN_MS } from "./ui.js";
 import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
 import { toast } from "./log.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 
 const MOD = "herdr-vscode-changes";
 const MAX_ROWS = 6000;
 const POLL_MS = 2000;
-const SPLIT_KEY = "split";
-const SPLIT_ON = "1";
-const SPLIT_OFF = "0";
+// Before settings.json the split diff toggle lived in localStorage: still the default.
+const OLD_SPLIT_KEY = "split";
+const OLD_SPLIT_ON = "1";
+const DIFF_SPLIT = "split";
+const DIFF_INLINE = "inline";
 const TAB_SPACES = "    ";
 const SHORT_SHA = 8;
 const ERROR_TAIL = 400;
@@ -87,7 +90,11 @@ export const diffMethods = {
     // A tab opened directly (herdr-app do tab.new --mod herdr-vscode-changes --props {...}) names its diff.
     this.propsTarget = options.target?.root && options.target?.path ? options.target : null;
     this.fixed = Boolean(options.fixed && this.propsTarget);
-    this.split = localStorage.getItem(SPLIT_KEY) === SPLIT_ON;
+    const splitOf = (fallback) => getSetting("scm", "diffLayout", fallback) === DIFF_SPLIT;
+    this.split = splitOf(localStorage.getItem(OLD_SPLIT_KEY) === OLD_SPLIT_ON ? DIFF_SPLIT : DIFF_INLINE);
+    whenSettings(cx, () => {
+      this.split = splitOf(this.split ? DIFF_SPLIT : DIFF_INLINE);
+    });
     this.scroller = VirtualListScrollHandle.new();
     cx.timer.every(POLL_MS, (cx) => this.syncDiff(cx, true));
     this.syncDiff(cx);
@@ -288,7 +295,7 @@ export const diffMethods = {
 
   setSplit(split, cx) {
     this.split = split;
-    localStorage.setItem(SPLIT_KEY, split ? SPLIT_ON : SPLIT_OFF);
+    setSetting("scm", "diffLayout", split ? DIFF_SPLIT : DIFF_INLINE);
     cx.notify();
   },
 

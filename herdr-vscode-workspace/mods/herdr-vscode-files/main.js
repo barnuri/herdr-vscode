@@ -8,6 +8,7 @@ import { loadIcons } from "./icons.js";
 import { untitledMethods } from "./untitled.js";
 import { fileMenuMethods } from "./file-menu.js";
 import SaveAsDialog from "./save-as-dialog.js";
+import { whenSettings } from "./settings.js";
 
 class HerdrVscodeFiles extends View {
   static FOLLOW_MS = 400;
@@ -17,6 +18,7 @@ class HerdrVscodeFiles extends View {
 
   init(given, cx) {
     const initProps = props() ?? given ?? {};
+    whenSettings(cx);
     if (initProps.fileMenu) {
       this.fileMenu = initProps.fileMenu;
       return;

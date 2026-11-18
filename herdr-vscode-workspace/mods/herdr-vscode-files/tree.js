@@ -6,6 +6,7 @@ import { parseStatus } from "./git-core.js";
 import { TEXT, Icon, IconButton, Badge, FileIcon, Message, markColor } from "./ui.js";
 import { showInViewer } from "./tabs.js";
 import { toast, logError } from "./log.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 
 const MOD = "herdr-vscode-files";
 const ROW = 24;
@@ -23,7 +24,8 @@ const NAME_PREFIX_BONUS = 200;
 const PATH_HIT_SCORE = 500;
 const CONSECUTIVE_SCORE = 5;
 const TRANSPARENT = "#00000000";
-const DOTS_KEY = "dots";
+// Before settings.json "show hidden files" lived in localStorage: still the default.
+const OLD_DOTS_KEY = "dots";
 const NOISY_PATH = /\/(\.git|node_modules|\.next|dist)(\/|$)/;
 const ERROR_LEVEL = "error";
 
@@ -112,7 +114,10 @@ export const treeMethods = {
     this.ignored = new Set();
     this.filter = "";
     this.index = null;
-    this.showDots = localStorage.getItem(DOTS_KEY) !== "0";
+    this.showDots = getSetting("explorer", "showHidden", localStorage.getItem(OLD_DOTS_KEY) !== "0") !== false;
+    whenSettings(cx, () => {
+      this.showDots = getSetting("explorer", "showHidden", this.showDots) !== false;
+    });
     this.filterState.on("change", (_event, cx) => {
       this.filter = this.filterState.value().trim().toLowerCase();
       if (this.filter && !this.index && !this.indexing) {
@@ -481,7 +486,7 @@ export const treeMethods = {
 
   toggleDots(cx) {
     this.showDots = !this.showDots;
-    localStorage.setItem(DOTS_KEY, this.showDots ? "1" : "0");
+    setSetting("explorer", "showHidden", this.showDots);
     cx.notify();
   },
 

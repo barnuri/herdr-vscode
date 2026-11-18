@@ -7,7 +7,8 @@ import { workspaceProblems, countProblems } from "./panel-core.js";
 import { confirmMethods, runAction } from "./actions.js";
 import { TEXT, Icon, ConfirmView, stateLook } from "./ui.js";
 import { findNode } from "./layout-core.js";
-import { AUTOSAVE_KEY, AUTOSAVE_OFF, AUTOSAVE_AFTER_DELAY, autoSaveMode } from "./fileops-core.js";
+import { AUTOSAVE_DEFAULT, AUTOSAVE_OFF, AUTOSAVE_AFTER_DELAY, autoSaveMode } from "./fileops-core.js";
+import { getSetting, setSetting, whenSettings } from "./settings.js";
 import { toast } from "./log.js";
 
 class HerdrVscodeStatus extends View {
@@ -36,6 +37,7 @@ class HerdrVscodeStatus extends View {
 
   init(given, cx) {
     const options = props() ?? given ?? {};
+    whenSettings(cx);
     if (options.confirm) {
       this.confirmSpec = options.confirm;
       this.confirmOverlay = options.overlay;
@@ -277,10 +279,10 @@ class HerdrVscodeStatus extends View {
     if (ws?.name && mid) {
       right.push(this.chip(t, "st-wsname", { icon: "layers", color: t.muted, tip: ws.file ?? ws.name }, ws.name));
     }
-    const autoSaveOn = autoSaveMode(shared(AUTOSAVE_KEY)) !== AUTOSAVE_OFF;
+    const autoSaveOn = autoSaveMode(getSetting("files", "autoSave", AUTOSAVE_DEFAULT)) !== AUTOSAVE_OFF;
     right.push(this.chip(t, "st-autosave", {
       icon: "check", color: autoSaveOn ? t.muted : t.dim, tip: autoSaveOn ? "Auto Save after a 1 s pause · click to turn off" : "Auto Save is off (⌘S saves) · click to turn on",
-      onClick: () => setShared(AUTOSAVE_KEY, autoSaveOn ? AUTOSAVE_OFF : AUTOSAVE_AFTER_DELAY),
+      onClick: () => setSetting("files", "autoSave", autoSaveOn ? AUTOSAVE_OFF : AUTOSAVE_AFTER_DELAY),
     }, div().child(autoSaveOn ? "Auto Save" : "Auto Save: off")));
   }
 

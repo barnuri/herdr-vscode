@@ -1,6 +1,6 @@
 import { View } from "gpui-kit";
 import { TextareaState, InputState } from "gpui-base";
-import { props, checking } from "herdr";
+import { props, checking, nextCommand } from "herdr";
 import { panelMethods } from "./panel.js";
 import { diffMethods } from "./diff.js";
 import { sectionMethods } from "./sections.js";
@@ -24,6 +24,8 @@ class HerdrVscodeChanges extends View {
   static {
     Object.assign(this.prototype, panelMethods, diffMethods, sectionMethods, scmPopupMethods, confirmMethods);
   }
+
+  static VIEW_COMMANDS = { viewAsTree: "tree", viewAsList: "flat" };
 
   init(given, cx) {
     const options = props() ?? given ?? {};
@@ -69,6 +71,15 @@ class HerdrVscodeChanges extends View {
     }
     cx.timer.every(HerdrVscodeChanges.FOLLOW_MS, (cx) => this.followPanel(cx));
     cx.timer.every(HerdrVscodeChanges.REFRESH_MS, (cx) => this.refresh(cx));
+    // Key bindings and `herdr-app do herdr-vscode-changes.viewAsTree` (or .viewAsList).
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const view = HerdrVscodeChanges.VIEW_COMMANDS[await nextCommand()];
+        if (view) {
+          this.setView(view, cx);
+        }
+      }
+    });
   }
 
   render() {

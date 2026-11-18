@@ -141,6 +141,11 @@ toggles CI.
 
 ## Settings
 
+Your choices (activity bar order and hidden icons, Source Control view and diff layout, auto save,
+blame, hidden files, search options, Git History branches, CI filters, panel tab, Pending Repos)
+are saved in `~/.config/herdr-vscode/settings.json`, one section per feature. You can edit the file
+by hand; the list of keys and defaults is in [CLAUDE.md](CLAUDE.md).
+
 - **Auto save**: on by default (after a short delay), like VS Code. Turn it off or on from the tab
   right-click menu (Auto Save) or the status bar. Off, ⌘S saves.
 - **Shared configs**: herdr-vscode reads the same files as the Herdr plugins, so one config drives
@@ -149,10 +154,10 @@ toggles CI.
   - Projects reads herdr-project-manager's
     `~/.config/herdr/plugins/config/barnuri.project-manager/projects.json` (globs, excludes, pinned).
   - Updates reads herdr-auto-update's `~/.config/herdr/plugins/config/barnuri.auto-update/config.json`.
-- **Pending Repos** (an extension view): the `settings` in its installed
-  `~/.config/herdr-app/mods/herdr-vscode-pending/mod.json`: `root` (the folder to scan, default
-  `~/code`) and `auditScript` (default: the bundled `repo_pending_audit.py`). `sync.sh` keeps
-  settings you saved there.
+- **Pending Repos** (an extension view): `pending.root` (the folder to scan, default `~/code`) and
+  `pending.auditScript` (default: the bundled `repo_pending_audit.py`) in `settings.json`. The
+  `settings` in its installed `~/.config/herdr-app/mods/herdr-vscode-pending/mod.json` are still read
+  as a fallback.
 - **Logs**: every mod writes its actions (git actions, file operations, tab closes, updates) and
   errors to `~/Library/Logs/herdr-vscode/herdr-vscode.log`; errors also to `herdr-vscode-error.log`.
 
