@@ -4,7 +4,7 @@ import { theme, layout, run, hc, exec, terminals, spaces, panes, shared, setShar
 import { ctx, baseName, workspace, rootFor, setActive, repoTop } from "./ws.js";
 import { findProject, pmOf } from "./scripts.js";
 import { showInViewer, viewerValue } from "./tabs.js";
-import { withContent, findNode, withChildAt } from "./layout-core.js";
+import { withContent, findNode, withChildAt, withChildAfter } from "./layout-core.js";
 import { parsePorts, workspaceProblems, pickChecks, parseCheckOutput, countProblems } from "./panel-core.js";
 import { panelTerminals, pickShown, isTerminalTab, fallbackTab, leadTerminal } from "./terminal-core.js";
 import { askConfirm, confirmMethods } from "./actions.js";
@@ -26,13 +26,13 @@ export default class HerdrVscodePanel extends View {
   static REDIRECT_MS = 200;
   static VIEWER_MODS = ["herdr-vscode-files", "herdr-vscode-changes"];
   static SIZE = 260;
-  static MAXIMIZED_THRESHOLD = 40;
   static MAXIMIZED_SIZE = 2000;
   static PORTS_POLL_MS = 3000;
   static PROBLEMS_REDRAW_MS = 1500;
   static TIDY_MS = 1000;
   static LIST_REDRAW_MS = 1000;
   static SPLIT_BLOCK = "term-split";
+  static SPLIT_MIN = 80;
   static LIST_ROW_PX = 22;
   static LIST_BLOCK = "term-list";
   static TERM_ROW = "term-row";
@@ -114,9 +114,29 @@ export default class HerdrVscodePanel extends View {
     setShared(HerdrVscodePanel.CHECKS_KEY, { ...HerdrVscodePanel.checks(), [top]: entry });
   }
 
+  // Only the maximize button makes the panel "maximized"; a panel dragged taller is a normal size.
+  // A terminal moved into the panel keeps the size of the pane it left until a resize, so
+  // its program draws at the old width. Shrinking the panel by 1 px now and growing it back
+  // on the next tick (settleSize) makes Herdr resize it to the panel.
+  nudgeSize() {
+    const px = this.bottom()?.size?.px;
+    if (!px || this.nudgedFrom) {
+      return;
+    }
+    this.nudgedFrom = px;
+    run("layout.resize", { id: "bottom", px: px - 1 });
+  }
+
+  settleSize() {
+    if (!this.nudgedFrom) {
+      return;
+    }
+    run("layout.resize", { id: "bottom", px: this.nudgedFrom });
+    this.nudgedFrom = null;
+  }
+
   static isMaximized(bottom) {
-    const normal = Math.max(HerdrVscodePanel.SIZE, Number(getSetting("panel", "height", 0)) || 0);
-    return (bottom?.size?.px ?? normal) > normal + HerdrVscodePanel.MAXIMIZED_THRESHOLD;
+    return (bottom?.size?.px ?? 0) >= HerdrVscodePanel.MAXIMIZED_SIZE;
   }
 
   static plural(count, word) {
@@ -169,6 +189,7 @@ export default class HerdrVscodePanel extends View {
     loadSettings();
     cx.timer.every(HerdrVscodePanel.TIDY_MS, (cx) => this.tidy(cx));
     cx.timer.every(HerdrVscodePanel.REDIRECT_MS, () => {
+      this.settleSize();
       this.redirect();
       this.restoreForEditor();
     });
@@ -201,6 +222,9 @@ export default class HerdrVscodePanel extends View {
     if (command === "new") {
       await this.add(cx);
     }
+    if (command === "split") {
+      await this.split(cx);
+    }
     if (command === "checks") {
       this.runChecks(cx);
     }
@@ -232,13 +256,18 @@ export default class HerdrVscodePanel extends View {
       next = withContent(next, "term", content) ?? next;
     }
     // The split shows a second shell beside the first, like VS Code's split terminal.
-    const splitNode = findNode(next, HerdrVscodePanel.SPLIT_BLOCK);
     const splitShown = state.view === HerdrVscodePanel.TERMINAL && Boolean(state.split) && state.split !== state.shown;
+    // A layout saved before the split existed (or rebuilt by a layout.set) may lack its block.
+    if (splitShown && !findNode(next, HerdrVscodePanel.SPLIT_BLOCK)) {
+      next = withChildAfter(next, "term", { id: HerdrVscodePanel.SPLIT_BLOCK, type: "block", min: HerdrVscodePanel.SPLIT_MIN, content: { terminal: state.split } }) ?? next;
+    }
+    const splitNode = findNode(next, HerdrVscodePanel.SPLIT_BLOCK);
     if (splitNode && splitShown && JSON.stringify(splitNode.content) !== JSON.stringify({ terminal: state.split })) {
       next = withContent(next, HerdrVscodePanel.SPLIT_BLOCK, { terminal: state.split }) ?? next;
     }
     if (next !== tree) {
       run("layout.set", { layout: next });
+      this.nudgeSize();
     }
     if (splitNode && Boolean(splitNode.hidden) === splitShown) {
       run(splitShown ? "layout.show" : "layout.hide", { id: HerdrVscodePanel.SPLIT_BLOCK });
@@ -379,7 +408,7 @@ export default class HerdrVscodePanel extends View {
       setSetting("panel", "visible", visible);
     }
     const height = bottom.size?.px;
-    if (visible && height && !HerdrVscodePanel.isMaximized(bottom) && height !== getSetting("panel", "height", HerdrVscodePanel.SIZE)) {
+    if (visible && height && !this.nudgedFrom && !HerdrVscodePanel.isMaximized(bottom) && height !== getSetting("panel", "height", HerdrVscodePanel.SIZE)) {
       setSetting("panel", "height", height);
     }
   }

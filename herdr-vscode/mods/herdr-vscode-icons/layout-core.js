@@ -54,3 +54,26 @@ export function withChildAt(tree, parentId, childId, side) {
   };
   return walk(tree);
 }
+
+// Puts `node` right after the child `siblingId` in its parent's children (null: no sibling, or
+// a node with that id already exists).
+export function withChildAfter(tree, siblingId, node) {
+  if (findNode(tree, node.id)) {
+    return null;
+  }
+  let placed = false;
+  const walk = (current) => {
+    const copy = { ...current };
+    if (Array.isArray(current.children)) {
+      const index = current.children.findIndex((child) => child.id === siblingId);
+      copy.children = current.children.map(walk);
+      if (index >= 0) {
+        copy.children.splice(index + 1, 0, node);
+        placed = true;
+      }
+    }
+    return copy;
+  };
+  const next = walk(tree);
+  return placed ? next : null;
+}

@@ -4,7 +4,7 @@ import { theme, layout, run, hc, exec, terminals, spaces, panes, shared, setShar
 import { ctx, baseName, workspace, rootFor, setActive, repoTop } from "./ws.js";
 import { findProject, pmOf } from "./scripts.js";
 import { showInViewer, viewerValue } from "./tabs.js";
-import { withContent, findNode, withChildAt } from "./layout-core.js";
+import { withContent, findNode, withChildAt, withChildAfter } from "./layout-core.js";
 import { parsePorts, workspaceProblems, pickChecks, parseCheckOutput, countProblems } from "./panel-core.js";
 import { panelTerminals, pickShown, isTerminalTab, fallbackTab, leadTerminal } from "./terminal-core.js";
 import { askConfirm, confirmMethods } from "./actions.js";
@@ -32,6 +32,7 @@ export default class HerdrVscodePanel extends View {
   static TIDY_MS = 1000;
   static LIST_REDRAW_MS = 1000;
   static SPLIT_BLOCK = "term-split";
+  static SPLIT_MIN = 80;
   static LIST_ROW_PX = 22;
   static LIST_BLOCK = "term-list";
   static TERM_ROW = "term-row";
@@ -221,6 +222,9 @@ export default class HerdrVscodePanel extends View {
     if (command === "new") {
       await this.add(cx);
     }
+    if (command === "split") {
+      await this.split(cx);
+    }
     if (command === "checks") {
       this.runChecks(cx);
     }
@@ -252,8 +256,12 @@ export default class HerdrVscodePanel extends View {
       next = withContent(next, "term", content) ?? next;
     }
     // The split shows a second shell beside the first, like VS Code's split terminal.
-    const splitNode = findNode(next, HerdrVscodePanel.SPLIT_BLOCK);
     const splitShown = state.view === HerdrVscodePanel.TERMINAL && Boolean(state.split) && state.split !== state.shown;
+    // A layout saved before the split existed (or rebuilt by a layout.set) may lack its block.
+    if (splitShown && !findNode(next, HerdrVscodePanel.SPLIT_BLOCK)) {
+      next = withChildAfter(next, "term", { id: HerdrVscodePanel.SPLIT_BLOCK, type: "block", min: HerdrVscodePanel.SPLIT_MIN, content: { terminal: state.split } }) ?? next;
+    }
+    const splitNode = findNode(next, HerdrVscodePanel.SPLIT_BLOCK);
     if (splitNode && splitShown && JSON.stringify(splitNode.content) !== JSON.stringify({ terminal: state.split })) {
       next = withContent(next, HerdrVscodePanel.SPLIT_BLOCK, { terminal: state.split }) ?? next;
     }

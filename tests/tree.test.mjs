@@ -41,3 +41,12 @@ test("withChildAt: moves the terminal list left or right, null when already ther
   assert.equal(withChildAt(tree, "row", "nope", "left"), null);
   assert.deepEqual(tree.children[0].children.map((c) => c.id), ["term", "split", "list"]);
 });
+
+test("withChildAfter inserts a node after its sibling, once", async () => {
+  const { withChildAfter } = await import("../shared/layout-core.js");
+  const tree = { id: "root", children: [{ id: "row", children: [{ id: "list" }, { id: "term" }] }] };
+  const next = withChildAfter(tree, "term", { id: "split" });
+  assert.deepEqual(next.children[0].children.map((child) => child.id), ["list", "term", "split"]);
+  assert.equal(withChildAfter(next, "term", { id: "split" }), null);
+  assert.equal(withChildAfter(tree, "missing", { id: "split" }), null);
+});
