@@ -1,5 +1,4 @@
-// Source Control, VS Code's way: the commit box on top (⌘Enter commits, ✨ writes the message
-// with Claude, the ⌄ has Commit & Push / Sync / Amend), then Merge / Staged / Changes, then the
+// Source Control, VS Code's way: the commit box on top (⌘Enter commits, the ⌄ has Commit & Push / Sync / Amend), then Merge / Staged / Changes, then the
 // GitLens sections (sections.js).
 //
 // Writes, and how they're guarded:
@@ -9,10 +8,10 @@
 //   stash / new branch            a dialog you fill in is the ask
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
-import { theme, notify, shared, exec, home } from "herdr";
+import { theme, notify, shared, exec } from "herdr";
 import { ctx, contextKey, git, repoTop, changedAt, bump, baseName } from "./ws.js";
 import { parseStatus, parseNumstat } from "./git-core.js";
-import { primaryAction, discardPlan, statBlocks, subjectInfo, commitPrompt, cleanMessage } from "./scm-core.js";
+import { primaryAction, discardPlan, statBlocks, subjectInfo } from "./scm-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, markColor, tint, SPIN_MS } from "./ui.js";
 import { showInViewer } from "./tabs.js";
 import { RepoButton } from "./repo-picker.js";
@@ -123,7 +122,6 @@ export const panelMethods = {
     switch (c.cmd) {
       case "commit": return this.commit(cx, c.then ?? null, c.kind ?? null);
       case "amend": return this.setAmend(!this.amend, cx);
-      case "generate": return this.generate(cx);
       case "stageAll": return this.index("stage", this.groups().unstaged, cx);
       case "unstageAll": return this.index("unstage", this.groups().staged, cx);
       case "discardAll": return this.askDiscard(this.groups().unstaged);
@@ -341,47 +339,6 @@ export const panelMethods = {
     });
   },
 
-  // ✨ The message from the staged diff (or every change when nothing is staged), by `claude -p`.
-  generate(cx) {
-    if (this.aiBusy || !this.root) return;
-    const root = this.root;
-    const g = this.groups();
-    const staged = g.staged.length > 0;
-    const fresh = staged ? [] : g.unstaged.filter((f) => f.untracked).map((f) => f.path);
-    const before = this.message.value();
-    this.aiBusy = true;
-    this.note = null;
-    cx.notify();
-    cx.spawn(async (cx) => {
-      try {
-        const scope = staged ? ["--cached"] : [];
-        const plain = ["--no-ext-diff", "--no-textconv", "--no-color"];
-        const [diff, stat, log] = await Promise.all([
-          git(["diff", ...scope, ...plain], { cwd: root, on: this.on }),
-          git(["diff", ...scope, ...plain, "--stat=100"], { cwd: root, on: this.on }),
-          git(["log", "-n", "12", "--no-merges", "--format=%s"], { cwd: root, on: this.on }),
-        ]);
-        let text = diff.stdout;
-        if (fresh.length) text += `\nNew files (not shown): ${fresh.slice(0, 80).join(", ")}`;
-        if (!text.trim()) throw new Error("there are no changes to describe");
-        const prompt = commitPrompt({ diff: text, stat: stat.stdout.trim(), subjects: log.stdout.split("\n").filter(Boolean), branch: this.branch ?? "" });
-        const args = ["-p", prompt, "--model", "haiku", "--tools", "", "--no-session-persistence"];
-        let r = await exec("claude", args, { cwd: root, on: this.on ?? null, timeout: 120000 }).catch(() => null);
-        if (!r && !this.on) r = await exec(`${home()}/.local/bin/claude`, args, { cwd: root, timeout: 120000 }).catch(() => null);
-        if (!r) throw new Error("the claude command isn't installed");
-        if (r.code !== 0) throw new Error((r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop());
-        const msg = cleanMessage(r.stdout);
-        if (!msg) throw new Error("Claude returned nothing");
-        if (this.root === root && this.message.value() === before) this.message.set_value(msg);
-      } catch (e) {
-        this.note = `Couldn't write a message: ${e.message}`;
-      } finally {
-        this.aiBusy = false;
-        cx.notify();
-      }
-    });
-  },
-
   // ── opening things ─────────────────────────────────────────────────────────────────────
   toggleGroup(id, cx) {
     if (!this.closed.delete(id)) this.closed.add(id);
@@ -446,7 +403,6 @@ export const panelMethods = {
       { id: "cs", icon: "sync", color: t.ansi4, label: all ? "Commit All & Sync" : "Commit & Sync", cmd: { cmd: "commit", kind: all ? "commitAll" : "commit", then: "sync" }, disabled: noMsg || this.amend || !this.upstream },
       { sep: true, id: "s1" },
       { id: "amend", icon: "pencil", color: t.ansi3, label: "Amend Last Commit", checked: this.amend, tip: "Rewrite the latest commit. Careful if it's already pushed.", cmd: { cmd: "amend" }, disabled: !this.head },
-      { id: "ai", icon: "sparkles", color: t.ansi5, label: "Write Message with Claude", cmd: { cmd: "generate" } },
     ], 250);
   },
 
@@ -602,13 +558,7 @@ export const panelMethods = {
         .when(this.amend, (el) => el.child(h_flex().h(16).px(6).gap(4).items_center().rounded(8).bg(tint(t.ansi3, "26")).text_size(TEXT.tiny).text_color(t.ansi3)
           .child(Icon("pencil", 9)).child("AMEND")))
         .child(div().flex_1())
-        .when(info.len > 0, (el) => el.child(div().id("c-len").text_size(TEXT.tiny).text_color(infoColor).tooltip("Subject line length: 50 is tidy, 72 is the limit").child(`${info.len}`)))
-        .child(h_flex().id("c-ai").h(20).px(6).gap(4).items_center().rounded(5).cursor_pointer()
-          .text_size(TEXT.caption).text_color(this.aiBusy ? t.ansi5 : t.dim).hover((s) => s.bg(tint(t.ansi5, "22")).text_color(t.ansi5))
-          .tooltip("Write the message with Claude (from the staged changes, or all of them)")
-          .on_click((_e, cx) => this.generate(cx))
-          .child(this.aiBusy ? Icon("spinner", 12).spin(SPIN_MS) : Icon("sparkles", 12))
-          .when(Boolean(this.aiBusy), (e2) => e2.child("Writing…"))));
+        .when(info.len > 0, (el) => el.child(div().id("c-len").text_size(TEXT.tiny).text_color(infoColor).tooltip("Subject line length: 50 is tidy, 72 is the limit").child(`${info.len}`))));
     const solid = pa.enabled;
     const accent = pa.kind === "amend" ? t.ansi3 : t.accent;
     const fg = solid ? t.accent_foreground ?? t.background : t.dim;

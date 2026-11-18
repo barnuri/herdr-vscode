@@ -4,3 +4,4 @@ node_modules/
 jsconfig.json
 .backups/
 mods/*/cache/
+**/agent-spec

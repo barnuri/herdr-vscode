@@ -1,11 +1,9 @@
 // vx-status: the bottom bar. Left: the repo every vx panel shows (and why), its branch, ahead /
-// behind, changes, staged, conflicts and stashes. Right, for a Claude Code pane: model, effort
-// and the ctx / 5h / 7d meters our vx-status Claude Code plugin writes to
-// ~/.local/state/vx-status/<terminal>.json.
+// behind, changes, staged, conflicts and stashes.
 // Fetch, pull and push sit behind the ↑↓ menu and always ask first.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, home, readTextFile, watchFolder, exec, openOverlay, closeOverlay, props, run, notify, layout, checking, shared, setShared } from "herdr";
+import { theme, home, openOverlay, closeOverlay, props, run, notify, layout, checking, shared, setShared } from "herdr";
 import { ctx, contextKey, git, repoTop, changedAt, baseName, workspace } from "./ws.js";
 import { parseStatus } from "./git-core.js";
 import { workspaceProblems, countProblems } from "./panel-core.js";
@@ -15,17 +13,6 @@ import { TEXT, Icon, ConfirmView, tint, stateLook } from "./ui.js";
 const MOD = "vx-status";
 const FOLLOW_MS = 400;
 const GIT_MS = 8000;
-const METER = { ctx: "ansi6", "5h": "ansi5", "7d": "ansi2" };
-const infoDir = () => `${home()}/.local/state/vx-status`;
-const isClaude = (pane) => Boolean(pane && (pane.app === "claude-code" || pane.program?.key === "claude"));
-
-// "claude-opus-5-5[1m]" -> "Opus 5.5"
-function modelName(id) {
-  const m = /(opus|sonnet|haiku|fable)[-_ ]?(\d+)?(?:[-.](\d+))?/i.exec(id ?? "");
-  if (!m) return id ?? "";
-  return `${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()}${m[2] ? ` ${m[2]}${m[3] ? `.${m[3]}` : ""}` : ""}`;
-}
-const windowLabel = (n) => (!n ? null : n >= 1e6 ? `${n / 1e6}M` : `${Math.round(n / 1000)}k`);
 const find = (n, id) => (n?.id === id ? n : (n?.children ?? []).map((c) => find(c, id)).find(Boolean) ?? null);
 
 
@@ -47,11 +34,9 @@ class VxStatus extends View {
     this.width = 1200;
     this.tops = new Map();
     this.g = null;
-    this.info = null;
     if (checking()) return;
     cx.timer.every(FOLLOW_MS, (cx) => this.follow(cx));
     cx.timer.every(GIT_MS, (cx) => this.refresh(cx));
-    this.watchInfo(cx);
   }
 
   follow(cx) {
@@ -61,11 +46,6 @@ class VxStatus extends View {
       this.key = key;
       this.seenChange = changedAt();
       this.refresh(cx);
-    }
-    const term = c.focus.terminal;
-    if (term !== this.infoFor) {
-      this.infoFor = term;
-      this.readInfo(cx);
     }
   }
 
@@ -104,42 +84,6 @@ class VxStatus extends View {
         }
         cx.notify();
       }
-    });
-  }
-
-  // ── Claude, from our plugin ────────────────────────────────────────────────────────────
-  watchInfo(cx) {
-    cx.spawn(async (cx) => {
-      await exec("mkdir", ["-p", infoDir()]).catch(() => {});
-      for (;;) {
-        try {
-          await watchFolder(infoDir());
-        } catch {
-          return;
-        }
-        this.readInfo(cx);
-      }
-    });
-  }
-
-  readInfo(cx) {
-    const { focus } = ctx();
-    if (!focus.terminal || focus.terminal.includes("/") || !isClaude(focus.pane)) {
-      if (this.info) {
-        this.info = null;
-        cx.notify();
-      }
-      return;
-    }
-    const term = focus.terminal;
-    cx.spawn(async (cx) => {
-      let info = null;
-      try {
-        info = JSON.parse((await readTextFile(`${infoDir()}/${term}.json`)) ?? "null");
-      } catch {}
-      if (ctx().focus.terminal !== term) return;
-      this.info = info;
-      cx.notify();
     });
   }
 
@@ -196,14 +140,6 @@ class VxStatus extends View {
       .children(kids.filter((k) => k !== null && k !== undefined && k !== ""));
   }
 
-  meterColor(t, label, pct) {
-    return pct >= 95 ? t.ansi1 : pct >= 80 ? t.ansi3 : t[METER[label]] ?? t.accent;
-  }
-
-  track(t, pct, color) {
-    return div().w(44).h(4).flex_none().rounded(2).bg(t.raised).child(div().h_full().rounded(2).w(Math.max(pct > 0 ? 2 : 0, 0.44 * pct)).bg(color));
-  }
-
   renderMenu() {
     const t = theme();
     const { g } = this.menu;
@@ -250,17 +186,7 @@ class VxStatus extends View {
       g?.stash && mid ? this.chip(t, "st-stash", { icon: "archive", color: t.dim, tip: `${g.stash} stash${g.stash === 1 ? "" : "es"}` }, String(g.stash)) : null,
       g && g.top && !g.changed && mid ? div().text_size(11).text_color(t.dim).child("clean") : null,
     ].filter(Boolean);
-    const i = this.info && isClaude(c.focus.pane) ? this.info : null;
-    const meters = (i?.meters ?? []).filter((m) => wide || m.label === "ctx");
-    const right = i
-      ? [
-        this.chip(t, "st-model", { icon: "sparkles", color: t.foreground, tip: i.model },
-          div().child(modelName(i.model)),
-          mid ? div().text_color(t.dim).child([i.effort, wide ? windowLabel(i.window) : null].filter(Boolean).join(" · ")) : null),
-        ...meters.map((m) => this.chip(t, `st-m-${m.label}`, { tip: `${m.label}: ${m.percent}% used` },
-          div().text_color(t.dim).child(m.label), this.track(t, m.percent, this.meterColor(t, m.label, m.percent)), div().child(`${m.percent}%`))),
-      ]
-      : [];
+    const right = [];
     if (vs) {
       // ✕ errors ⚠ warnings (workspace + Run checks) and listening ports: open the panel there.
       const pc = countProblems(workspaceProblems(workspace()?.roots ?? [], shared("vx.git") ?? {}, shared("vx.ci.summary") ?? {}), shared("vx.checks") ?? {});

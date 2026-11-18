@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { primaryAction, discardPlan, splitHunks, hunkPatch, initials, statBlocks, subjectInfo, commitPrompt, cleanMessage, commitUrl, badBranchName } from "../shared/scm-core.js";
+import { primaryAction, discardPlan, splitHunks, hunkPatch, initials, statBlocks, subjectInfo, commitUrl, badBranchName } from "../shared/scm-core.js";
 
 const base = { amend: false, staged: 0, unstaged: 0, conflicts: 0, ahead: 0, behind: 0, upstream: "origin/main", branch: "main", head: "abc", message: "" };
 
@@ -45,14 +45,6 @@ test("initials, statBlocks, subjectInfo", () => {
   assert.deepEqual(subjectInfo("fix: short"), { len: 10, level: "ok" });
   assert.equal(subjectInfo("x".repeat(60)).level, "long");
   assert.equal(subjectInfo(`${"x".repeat(80)}\nbody`).level, "over");
-});
-
-test("commitPrompt and cleanMessage", () => {
-  const p = commitPrompt({ diff: "x".repeat(50), subjects: ["feat: a"], branch: "main", max: 10 });
-  assert.match(p, /- feat: a/);
-  assert.match(p, /cut at 10 characters/);
-  assert.equal(cleanMessage("```\nfeat: add x\n\nbody\n```"), "feat: add x\n\nbody");
-  assert.equal(cleanMessage('Commit message: "fix: y"'), "fix: y");
 });
 
 test("commitUrl and badBranchName", () => {

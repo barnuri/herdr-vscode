@@ -1,5 +1,5 @@
 // Source Control decisions as plain data: what the Commit button does, what Discard touches, one
-// diff hunk as a patch git can apply, the AI commit-message prompt. Pure: tested under node.
+// diff hunk as a patch git can apply. Pure: tested under node.
 
 // The big button under the message box, VS Code's way: Commit, or Commit All when nothing is
 // staged, or, with nothing to commit, Sync Changes / Publish Branch.
@@ -70,29 +70,6 @@ export function subjectInfo(message) {
   const subject = String(message ?? "").split("\n")[0];
   const len = subject.trim().length;
   return { len, level: len > 72 ? "over" : len > 50 ? "long" : "ok" };
-}
-
-// The prompt for `claude -p` that writes a commit message from a diff.
-export function commitPrompt({ diff, stat = "", subjects = [], branch = "", max = 40000 }) {
-  const d = String(diff ?? "");
-  const cut = d.length > max ? `${d.slice(0, max)}\n… (diff cut at ${max} characters)` : d;
-  return [
-    "Write the git commit message for the changes below.",
-    subjects.length ? `Match the style of this repository's recent commit subjects (prefixes, case, language):\n${subjects.map((s) => `- ${s}`).join("\n")}` : "",
-    "Rules: one subject line, imperative mood, under 72 characters. Add a blank line and a short body (wrapped at 72) only when the change needs explaining. Say what changed and why, not how. Output only the message: no code fences, no quotes, no preamble.",
-    branch ? `Branch: ${branch}` : "",
-    stat ? `Files:\n${stat}` : "",
-    `Diff:\n${cut}`,
-  ].filter(Boolean).join("\n\n");
-}
-
-// The model's answer -> a clean message (fences, quotes and "Commit message:" removed).
-export function cleanMessage(out) {
-  let s = String(out ?? "").trim();
-  s = s.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/, "").trim();
-  s = s.replace(/^(?:commit message|message)\s*:\s*/i, "").trim();
-  if (/^["'`].*["'`]$/s.test(s) && !s.slice(1, -1).includes("\n")) s = s.slice(1, -1).trim();
-  return s.replace(/\n{3,}/g, "\n\n");
 }
 
 // A web link to a commit for GitHub / GitLab remotes, else null. remote = parseRemote(url) with
