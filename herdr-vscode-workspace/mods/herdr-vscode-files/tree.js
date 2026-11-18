@@ -1,6 +1,8 @@
 import { div } from "gpui-kit";
-import { v_flex, h_flex, Input, v_virtual_list, Scrollbar } from "gpui-base";
-import { theme, exec, watchFolder, openOverlay, closeOverlay, props, hc, panes, focused, run } from "herdr";
+import { v_flex, h_flex, Input, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
+import { theme, exec, watchFolder, openOverlay, closeOverlay, props, hc, panes, focused, run, shared } from "herdr";
+import { REVEAL_KEY } from "./links.js";
+import { parentDirs } from "./links-core.js";
 import { ctx, contextKey, git, repoTop, changedAt, baseName } from "./ws.js";
 import { parseStatus } from "./git-core.js";
 import { TEXT, Icon, IconButton, Badge, FileIcon, Message, markColor } from "./ui.js";
@@ -108,6 +110,8 @@ function reportAgentError(body) {
 
 export const treeMethods = {
   initTree(cx) {
+    this.treeScroller = VirtualListScrollHandle.new();
+    this.revealSeen = shared(REVEAL_KEY)?.at ?? 0;
     this.tops = new Map();
     this.entries = new Map();
     this.openDirs = new Set();
@@ -128,7 +132,32 @@ export const treeMethods = {
     });
   },
 
+  // A path link was opened (links.js): expand its folders, select it and scroll it into view.
+  followReveal(cx) {
+    const reveal = shared(REVEAL_KEY);
+    const root = this.root?.replace(/\/$/, "");
+    if (!reveal || reveal.at === this.revealSeen || !root || this.on || !reveal.abs.startsWith(`${root}/`)) {
+      return;
+    }
+    this.revealSeen = reveal.at;
+    const rel = reveal.abs.slice(root.length + 1);
+    const dirs = parentDirs(rel);
+    dirs.forEach((dir) => this.openDirs.add(dir));
+    this.saveOpenDirs();
+    this.selected = rel;
+    this.revealRel = rel;
+    cx.spawn(async (cx) => {
+      for (const dir of ["", ...dirs]) {
+        if (!this.entries.has(dir)) {
+          await this.loadDir(dir).catch(() => {});
+        }
+      }
+      cx.notify();
+    });
+  },
+
   followTree(cx) {
+    this.followReveal(cx);
     const context = ctx();
     const key = contextKey(context);
     if (key !== this.key) {
@@ -545,8 +574,14 @@ export const treeMethods = {
       return body.child(Message(this.emptyMessage()));
     }
     const listId = `f-list-${this.root}-${this.filter ? "q" : "t"}`;
+    const revealAt = this.revealRel ? rows.findIndex((row) => row.rel === this.revealRel) : -1;
+    if (revealAt >= 0) {
+      this.revealRel = null;
+      this.treeScroller.scroll_to_item(revealAt, "center");
+    }
     return body
       .child(v_virtual_list(listId, rows.length, ROW, (i) => rows[i].key, (range) => rows.slice(range.start, range.end).map((row) => this.row(t, row)))
+        .track_scroll(this.treeScroller)
         .on_item_click((key, cx) => this.press(key, cx))
         .on_item_secondary_click((key, _event, cx) => {
           this.openMenu(key);

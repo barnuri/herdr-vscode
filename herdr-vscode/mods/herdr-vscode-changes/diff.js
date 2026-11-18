@@ -7,6 +7,7 @@ import { READ, diffRows, splitRows, lineStartOffset } from "./git-core.js";
 import { lexCached, languageOf, syntaxColors, editorSyntax } from "./syntax-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, Badge, codeFont, codeSize, codeLineHeight, tabSpaces, codeWrap, tint, SPIN_MS } from "./ui.js";
 import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
+import { linksIn, watchLinks, linkedRunChildren } from "./links.js";
 import { viewerValue, viewerTab, keptTabs } from "./tabs.js";
 import { toast } from "./log.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
@@ -105,6 +106,7 @@ export const diffMethods = {
     cx.timer.every(FOLLOW_MS, (cx) => this.syncDiff(cx));
     cx.timer.every(POLL_MS, (cx) => this.syncDiff(cx, true));
     cx.timer.every(AUTOSAVE_TICK_MS, (cx) => this.autoSaveWorking(cx));
+    watchLinks(cx);
     this.syncDiff(cx);
   },
 
@@ -135,6 +137,8 @@ export const diffMethods = {
     if (key !== this.diffKey) {
       this.releaseWorkingEditor(cx);
       this.diffKey = key;
+      const abs = `${target.root}/${target.path}`;
+      this.linkBase = target.on ? null : { fileDir: abs.slice(0, abs.lastIndexOf("/")), root: target.root };
       this.target = target;
       this.rows = null;
       this.problem = null;
@@ -245,7 +249,9 @@ export const diffMethods = {
       .children(this.lineNumbers(colors, row, side, size))
       .child(div().w(size * MARK_WIDTH_FACTOR).flex_none().text_center().text_color(kindColor(colors, row.kind)).child(row.kind === CONTEXT ? "" : row.kind))
       .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap()
-        .children(runs.map((run) => div().flex_none().whitespace_nowrap().text_color(run.kind ? syntax[run.kind] : colors.foreground).child(run.text || " "))));
+        .children(linkedRunChildren(runs, this.linkBase ? linksIn(row.text, this.linkBase) : [], {
+          idPrefix: `${side}${row.old ?? ""}-${row.next ?? ""}`, colorOf: (run) => (run.kind ? syntax[run.kind] : colors.foreground), linkColor: colors.accent,
+        })));
   },
 
   goHunk(step, cx) {

@@ -10,6 +10,7 @@ import { viewerValue, viewerTab, keptTabs, showInViewer } from "./tabs.js";
 import { AUTOSAVE_DEFAULT, autoSaveDue } from "./fileops-core.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
 import { logInfo, logError, toast } from "./log.js";
+import { linksIn, watchLinks, openMarkdownLink, linkedRunChildren, REVEAL_KEY } from "./links.js";
 
 const MOD = "herdr-vscode-files";
 const BLAME_W = 230;
@@ -108,7 +109,13 @@ export const previewMethods = {
     });
     if (Number.isInteger(initProps.line)) {
       this.selLine = initProps.line;
+      this.jumpLine = initProps.line;
     }
+    // Opened from a path link or `hv` (tools/hv): the Explorer reveals the file too.
+    if (initProps.reveal && this.propsFile) {
+      setShared(REVEAL_KEY, { abs: `${this.propsFile.root}/${this.propsFile.rel}`, root: this.propsFile.root, at: Date.now() });
+    }
+    watchLinks(cx);
     if (initProps.history === HISTORY_FILE || initProps.history === HISTORY_LINE) {
       this.wantHistory = initProps.history;
     }
@@ -501,7 +508,18 @@ export const previewMethods = {
       .child(div().w(3).h_full().flex_none().when(Boolean(bar), (el) => el.bg(bar)))
       .child(div().w(layout.size * GUTTER_RATIO).pr(layout.size * GUTTER_PAD_RATIO).flex_none().text_right().text_color(t.dim).child(String(lineNumber)))
       .child(h_flex().flex_1().min_w(0).whitespace_nowrap()
-        .children(runs.map((run) => div().flex_none().whitespace_nowrap().text_color(run.kind ? layout.colors[run.kind] : t.foreground).child(run.text || " "))));
+        .children(linkedRunChildren(runs, layout.where ? linksIn(layout.lines[i], layout.where) : [], {
+          idPrefix: `l${i}`, colorOf: (run) => (run.kind ? layout.colors[run.kind] : t.foreground), linkColor: t.accent,
+        })));
+  },
+
+  // Relative paths in this file resolve against its folder, then its repo root.
+  linkBase() {
+    if (!this.file || this.file.on) {
+      return null;
+    }
+    const abs = `${this.file.root}/${this.file.rel}`;
+    return { fileDir: abs.slice(0, abs.lastIndexOf("/")), root: this.file.root };
   },
 
   clickLine(key, cx) {
@@ -519,6 +537,7 @@ export const previewMethods = {
     const blameOn = Boolean(this.blameOn && this.blame);
     const layout = {
       colors: syntaxColors(t), size, height: Math.round(size * codeLineHeight()), lines, lang: languageOf(this.file.rel), blameOn,
+      where: this.linkBase(),
     };
     // Lexed lazily: only up to the last row shown, each line once.
     if (this.lexed?.lines !== lines || this.lexed.lang !== layout.lang) {
@@ -742,7 +761,8 @@ export const previewMethods = {
     }
     if (isMarkdown && !this.mdCode) {
       return div().id("pv-md-body").flex_1().min_h(0).overflow_y_scrollbar().px(28).py(18)
-        .child(TextView.markdown(`md-${this.fileKey}`, this.text).w_full().text_size(TEXT.title).selectable(true).scrollable(false));
+        .child(TextView.markdown(`md-${this.fileKey}`, this.text).w_full().text_size(TEXT.title).selectable(true).scrollable(false)
+          .on_link_click((url) => openMarkdownLink(url, this.linkBase() ?? {})));
     }
     if (this.editor && !this.blameOn) {
       return div().id("pv-editor").flex_1().min_h(0).font_family(codeFont())

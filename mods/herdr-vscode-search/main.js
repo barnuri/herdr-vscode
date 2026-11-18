@@ -4,6 +4,7 @@ import { theme, nextCommand, checking } from "herdr";
 import { workspace, git, ctx, baseName } from "./ws.js";
 import { grepArgs, parseGrep, matchSnippet } from "./search-core.js";
 import { lexCached, sliceRuns, languageOf, syntaxColors } from "./syntax-core.js";
+import { linksIn, watchLinks, linkedRunChildren } from "./links.js";
 import { showInViewer } from "./tabs.js";
 import { TEXT, Icon, FileIcon, RootIcon, tint } from "./ui.js";
 import { loadIcons } from "./icons.js";
@@ -72,6 +73,7 @@ export default class HerdrVscodeSearch extends View {
     if (checking()) {
       return;
     }
+    watchLinks(cx);
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();
@@ -282,7 +284,12 @@ export default class HerdrVscodeSearch extends View {
     const part = () => div().flex_none().whitespace_nowrap();
     const runs = lexCached(match.text, languageOf(row.f.rel));
     const syntax = syntaxColors(t);
-    const colored = (from, to) => sliceRuns(runs, from, to).map((run) => part().text_color(run.kind ? syntax[run.kind] : t.foreground).child(run.text));
+    const abs = `${row.g.root.path}/${row.f.rel}`;
+    const links = linksIn(match.text, { fileDir: abs.slice(0, abs.lastIndexOf("/")), root: row.g.root.path });
+    const colored = (from, to) => linkedRunChildren(sliceRuns(runs, from, to),
+      links.map((link) => ({ ...link, start: link.start - from, end: link.end - from })), {
+        idPrefix: `${row.key}-${from}`, colorOf: (run) => (run.kind ? syntax[run.kind] : t.foreground), linkColor: t.accent,
+      });
     return h_flex().id(row.key).h(HerdrVscodeSearch.ROW_HEIGHT).w_full().pl(pad + HerdrVscodeSearch.MATCH_EXTRA_PAD_PX).pr(6).items_center().cursor_pointer().hover((style) => style.bg(t.hover))
       .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap().text_size(TEXT.small)
         .when(snippet.ellipsis, (el) => el.child(part().text_color(t.dim).child("…")))

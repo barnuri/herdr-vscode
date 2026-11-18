@@ -274,21 +274,18 @@ class HerdrVscodeRunning extends View {
       .child(IconButton({ id: `kill-${folder.path}`, icon: "x", label: "Close everything here", onClick: () => this.closeRows(`Close everything in ${folder.name}?`, folder.rows) }));
   }
 
-  // Row 2 of a card: the orch summary, else the title, else the tab.
-  static detailOf(row) {
-    return row.orchSummary ?? (row.title || (row.tabName ? `tab ${row.tabName}` : baseName(row.cwd)));
-  }
+
 
   paneRow(row, folder, colors, depth) {
-    const twoRows = this.twoRows();
-    const name = row.title || baseName(row.cwd);
+    // A second line only carries an orch summary; each terminal is one row.
+    const twoRows = this.twoRows() && Boolean(row.orchSummary);
+    // The program icon names the harness, so the row shows the session title in its place.
+    const name = row.title || row.label;
     const head = h_flex().h(twoRows ? HerdrVscodeRunning.LINE_HEIGHT : this.rowHeight()).gap(6).items_center()
       .child(div().w(HerdrVscodeRunning.ICON_PX).flex_none().flex().justify_center().child(HerdrVscodeRunning.statusMark(row.status, colors)))
       .child(HerdrVscodeRunning.programIcon(row.program))
-      .child(div().flex_none().text_color(row.focused ? colors.foreground : colors.muted).child(row.label))
-      .when(!twoRows, (el) => el.child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(name)))
-      .when(twoRows, (el) => el.child(div().flex_1()))
-      .child(div().flex_none().text_size(TEXT.caption).text_color(colors.dim).child(row.orchSummary ? "orch" : row.tabName))
+      .child(div().flex_1().min_w(0).truncate().text_color(row.focused ? colors.foreground : colors.muted).child(name))
+      .child(div().flex_none().text_size(TEXT.caption).text_color(colors.dim).child(row.orchSummary ? "orch" : ""))
       .child(IconButton({ id: `kill-${row.pane}`, icon: "x", label: "Close", onClick: () => this.closeRows(`Close ${row.label}?`, [row]) }));
     const detailColor = row.orchSummary ? colors.ansi5 : colors.dim;
     return v_flex().id(`p-${row.pane}`).pl(6 + (depth + 1) * HerdrVscodeRunning.INDENT_PX).pr(6).cursor_pointer()
@@ -302,7 +299,7 @@ class HerdrVscodeRunning extends View {
       })
       .child(head)
       .when(twoRows, (el) => el.child(div().h(HerdrVscodeRunning.LINE_HEIGHT).pl(HerdrVscodeRunning.ICON_PX * 2 + 12).truncate()
-        .text_size(TEXT.caption).text_color(detailColor).child(HerdrVscodeRunning.detailOf(row))));
+        .text_size(TEXT.caption).text_color(detailColor).child(row.orchSummary)));
   }
 
   folderBlock(folder, colors, depth) {

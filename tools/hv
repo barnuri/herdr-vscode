@@ -1,0 +1,49 @@
+#!/usr/bin/env node
+// hv <path[:line[:col]]> ...: open files in the herdr-vscode editor (a new tab in the shown space)
+// and reveal them in the Explorer, like `code -g`. Herdr has no hook for ⌘-clicked paths in
+// terminals, so this is the way in from a shell: `alias code=hv`, or `ln -s` it onto your PATH.
+import { execFileSync } from "node:child_process";
+import { existsSync, statSync, realpathSync } from "node:fs";
+import path from "node:path";
+
+const POSITION = /^(.*?)(?::(\d+))?(?::(\d+))?$/;
+
+function repoRoot(dir) {
+  try {
+    return execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function open(arg) {
+  const [, file, line] = POSITION.exec(arg);
+  const given = existsSync(arg) ? arg : file;
+  const abs = realpathSync(path.resolve(given.replace(/^~(?=\/|$)/, process.env.HOME)));
+  if (statSync(abs).isDirectory()) {
+    throw new Error(`${arg}: a folder`);
+  }
+  const root = repoRoot(path.dirname(abs)) ?? path.dirname(abs);
+  const props = { mode: "view", fixed: true, reveal: true, file: { root, rel: path.relative(root, abs) } };
+  if (given !== arg && line) {
+    props.line = Number(line);
+  }
+  const request = { name: path.basename(abs), mod: "herdr-vscode-files", props };
+  execFileSync("herdr-app", ["do", "tab.new", JSON.stringify(request)], { stdio: ["ignore", "ignore", "inherit"] });
+}
+
+const args = process.argv.slice(2);
+if (!args.length) {
+  console.error("usage: hv <path[:line[:col]]>...");
+  process.exit(2);
+}
+let failed = false;
+for (const arg of args) {
+  try {
+    open(arg);
+  } catch (error) {
+    console.error(`hv: ${error.message}`);
+    failed = true;
+  }
+}
+process.exit(failed ? 1 : 0);
