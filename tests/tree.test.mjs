@@ -50,3 +50,13 @@ test("withChildAfter inserts a node after its sibling, once", async () => {
   assert.equal(withChildAfter(next, "term", { id: "split" }), null);
   assert.equal(withChildAfter(tree, "missing", { id: "split" }), null);
 });
+
+test("withChildFirst puts a node first in its parent, once", async () => {
+  const { withChildFirst } = await import("../shared/layout-core.js");
+  const tree = { id: "root", children: [{ id: "row", children: [{ id: "list" }] }] };
+  const next = withChildFirst(tree, "row", { id: "term" });
+  assert.deepEqual(next.children[0].children.map((child) => child.id), ["term", "list"]);
+  assert.equal(withChildFirst(next, "row", { id: "term" }), null);
+  assert.equal(withChildFirst(tree, "missing", { id: "term" }), null);
+  assert.deepEqual(tree.children[0].children.map((child) => child.id), ["list"]);
+});

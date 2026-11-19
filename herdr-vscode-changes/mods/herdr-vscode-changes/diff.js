@@ -14,6 +14,9 @@ import { getSetting, setSetting, whenSettings } from "./settings.js";
 
 const MOD = "herdr-vscode-changes";
 const MAX_ROWS = 6000;
+const DIFF_MIN_WIDTH = 400;
+const DIFF_CHAR_RATIO = 0.62;
+const DIFF_GUTTER = 12;
 const POLL_MS = 2000;
 const FOLLOW_MS = 100;
 // Before settings.json the split diff toggle lived in localStorage: still the default.
@@ -87,6 +90,11 @@ const stageableScope = (target) => target.scope === "unstaged" || target.scope =
 
 // The working tree side is editable in the split layout (a local repo; writeTextFile has no `on`).
 const editableTarget = (target) => Boolean(target && !target.on && (target.untracked || target.scope === "unstaged"));
+// scm.editButton (default on): the split diff header gets an Edit button that swaps the right side
+// for the whole working file in an editor. That editor does not line up with the left rows (no scroll
+// sync or line decorations in EditorState yet, see docs/split-diff-editing.md), so it is opt-in per
+// view. Delete the button, this flag and the editor path once herdr-app#1239 ships.
+const editButtonOn = () => getSetting("scm", "editButton", true) !== false;
 
 const isMergeDiff = (head) => /^diff --(cc|combined)/.test(head[0] ?? "");
 
@@ -136,6 +144,7 @@ export const diffMethods = {
     }
     if (key !== this.diffKey) {
       this.releaseWorkingEditor(cx);
+      this.editing = false;
       this.diffKey = key;
       const abs = `${target.root}/${target.path}`;
       this.linkBase = target.on ? null : { fileDir: abs.slice(0, abs.lastIndexOf("/")), root: target.root };
@@ -183,6 +192,10 @@ export const diffMethods = {
     const first = lines.findIndex((line) => line.startsWith("@@"));
     if (first < 0) {
       this.problem = /^Binary files/m.test(result.stdout) ? "Binary file changed." : "No changes to show here any more.";
+      this.rows = null;
+      this.hunks = null;
+      this.adds = 0;
+      this.dels = 0;
       return null;
     }
     const parts = splitHunks(lines);
@@ -281,7 +294,7 @@ export const diffMethods = {
   },
 
   async loadWorkingText(target, cx) {
-    if (!this.split || !editableTarget(target) || target !== this.target) {
+    if (!this.split || !this.editing || !editableTarget(target) || target !== this.target) {
       return;
     }
     const text = await readTextFile(`${target.root}/${target.path}`).catch(() => null);
@@ -432,6 +445,21 @@ export const diffMethods = {
     cx.notify();
   },
 
+  // The Edit button: the right side becomes the working file's editor (saved on ⌘S / auto save), or back to the aligned rows.
+  setEditing(editing, cx) {
+    this.editing = editing;
+    if (editing) {
+      this.loadWorkingText(this.target, cx).then(() => cx.notify());
+    } else {
+      this.releaseWorkingEditor(cx);
+    }
+    cx.notify();
+  },
+
+  canEdit(target) {
+    return editButtonOn() && this.split && editableTarget(target);
+  },
+
   diffHeader(colors, target) {
     const name = target.path.split("/").pop();
     const dir = target.path.includes("/") ? target.path.slice(0, target.path.lastIndexOf("/")) : "";
@@ -445,6 +473,7 @@ export const diffMethods = {
       .when(Boolean(target.subject), (el) => el.child(div().max_w(260).truncate().text_color(colors.muted).child(target.subject)))
       .when(Boolean(this.rows), (el) => el.child(div().text_color(colors.ansi2).child(`+${this.adds}`)).child(div().text_color(colors.ansi1).child(`−${this.dels}`)))
       .when(Boolean(this.rows && this.hunks?.hunks.length), (el) => el.child(this.hunkBar(colors)))
+      .when(this.canEdit(target), (el) => el.child(IconButton({ id: "d-edit", icon: "pencil", label: this.editing ? "Back to the aligned diff (read-only)" : "Edit the working file (not aligned with the left side)", active: this.editing, size: 22, onClick: (cx) => this.setEditing(!this.editing, cx) })))
       .child(IconButton({ id: "d-inline", icon: "inline", label: "Inline", active: !this.split, size: 22, onClick: (cx) => this.setSplit(false, cx) }))
       .child(IconButton({ id: "d-split", icon: "split", label: "Side by side", active: this.split, size: 22, onClick: (cx) => this.setSplit(true, cx) }));
   },
@@ -525,11 +554,20 @@ export const diffMethods = {
     const listId = `diff-${this.diffKey}-${this.split ? "s" : "i"}`;
     const itemKey = (index) => (items[index]?.kind === HUNK_ROW ? `${HUNK_KEY_PREFIX}${items[index].hunk}` : `r${index}`);
     const drawRange = (range) => items.slice(range.start, range.end).map((row) => this.diffRow(colors, syntax, lang, height, row));
+    // Widest line sets the content width, so long lines scroll sideways instead of clipping.
+    let widest = 0;
+    for (const row of items) {
+      const width = this.split ? (row.left?.text?.length ?? 0) + (row.right?.text?.length ?? 0) : (row.text?.length ?? 0);
+      widest = Math.max(widest, width);
+    }
+    const minWidth = Math.max(DIFF_MIN_WIDTH, (widest * DIFF_CHAR_RATIO + DIFF_GUTTER) * size);
     return div().id("d-body").flex_1().min_h(0).relative().font_family(codeFont()).text_size(size)
-      .child(v_virtual_list(listId, items.length, height, itemKey, drawRange)
-        .track_scroll(this.scroller)
-        .on_item_click((key, cx) => this.selectHunkByKey(key, cx))
-        .size_full())
+      .child(div().id("d-x").size_full().overflow_x_scrollbar()
+        .child(div().h_full().min_w(minWidth)
+          .child(v_virtual_list(listId, items.length, height, itemKey, drawRange)
+            .track_scroll(this.scroller)
+            .on_item_click((key, cx) => this.selectHunkByKey(key, cx))
+            .size_full())))
       .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0());
   },
 

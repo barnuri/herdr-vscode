@@ -4,7 +4,8 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, shared, setShared, exec } from "herdr";
 import { TEXT, Icon } from "./ui.js";
-import { fileWebLink } from "./remote-url.js";
+import { fileWebLinks } from "./remote-url.js";
+import { remoteLinkItems } from "./fileops-core.js";
 import { logInfo, logError } from "./log.js";
 
 const MOD = "herdr-vscode-files";
@@ -42,12 +43,13 @@ function menuItems(menu) {
       { sep: true, id: "s1" },
     );
   }
-  if (menu.link) {
-    items.push(
-      { id: "remote-open", icon: "external", label: "Git: Open Remote Link", cmd: "remoteOpen" },
-      { id: "remote-copy", icon: "copy", label: "Git: Copy Remote Link", cmd: "remoteCopy" },
-    );
-  }
+  items.push(...remoteLinkItems(menu.links).map((item) => ({
+    id: item.id,
+    icon: item.kind === "open" ? "external" : "copy",
+    label: item.label,
+    cmd: item.kind === "open" ? "remoteOpen" : "remoteCopy",
+    link: item.url,
+  })));
   if (menu.git) {
     items.push(
       { id: "file-history", icon: "history", label: "Git: View File History", cmd: "fileHistory" },
@@ -68,8 +70,8 @@ export const fileMenuMethods = {
     const lines = range && this.editor ? linesOfRange(this.editor.value(), range) : (this.selLine ? { start: this.selLine } : null);
     const selected = Boolean(range && range.end > range.start);
     this.menuTarget = newId();
-    fileWebLink(`${file.root}/${file.rel}`, { lines, on: file.on ?? null }).catch(() => null).then((link) => {
-      const menu = { target: this.menuTarget, editing: Boolean(this.editor), selected, lines, link, git: true };
+    fileWebLinks(`${file.root}/${file.rel}`, { lines, on: file.on ?? null }).catch(() => []).then((links) => {
+      const menu = { target: this.menuTarget, editing: Boolean(this.editor), selected, lines, links, git: true };
       const items = menuItems(menu);
       const separators = items.filter((item) => item.sep).length;
       const height = (items.length - separators) * ITEM + separators * SEPARATOR_HEIGHT + PADDING;
@@ -127,7 +129,7 @@ export const fileMenuMethods = {
     const menu = this.fileMenu;
     const post = (item, cx) => {
       const text = item.cmd === "paste" ? cx.read_from_clipboard() : undefined;
-      setShared(COMMAND_KEY, { target: menu.target, id: newId(), cmd: item.cmd, link: menu.link, lines: menu.lines, text });
+      setShared(COMMAND_KEY, { target: menu.target, id: newId(), cmd: item.cmd, link: item.link, lines: menu.lines, text });
       closeOverlay(props()?.overlay);
     };
     return v_flex().id("herdr-vscode-file-menu").size_full().p(6).gap(0).bg(t.popover ?? t.surface).text_color(t.foreground).text_size(TEXT.small)

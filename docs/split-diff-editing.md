@@ -30,7 +30,22 @@ Split layout, working-tree diffs only (`unstaged` scope or an untracked file, lo
 
 Inline mode, staged, commit, stash and compare diffs stay read-only, as before.
 
-If gpui-kit later gets scroll offsets or line decorations, add sync scroll and green line marks on
-the right side.
+## Note: aligned editable split, when Herdr supports it
+
+The split diff shows the aligned, highlighted rows read-only. The header Edit button (setting
+`scm.editButton`, default `true`; `false` hides it) switches the right side to the full-file editor,
+which does not line up with the left.
+
+Blocked on [herdrdev/herdr-app#1239](https://github.com/herdrdev/herdr-app/pull/1239) (open, ours:
+`EditorState.scroll_top`, `set_scroll_top`, `on("scroll")`, `set_line_decorations`); related issue
+[#664](https://github.com/herdrdev/herdr-app/issues/664). When it ships in a Herdr release:
+
+1. Replace the left read-only list with a readonly `EditorState` holding the HEAD side.
+2. Keep the right editor as is, and sync both with `scroll_top` / `set_scroll_top` / `on("scroll")`.
+3. Mark added / removed / changed lines with `set_line_decorations` on both sides.
+4. Delete the Edit button, `scm.editButton`, `editableBody` and the `editing` flag in `mods/herdr-vscode-changes/diff.js`.
+
+Rejected for now: an "Edit hunk" mode (the selected hunk's new-side lines in a small editor, written
+back by line range). It works without #1239 but breaks alignment inside the hunk wherever lines were removed.
 
 ![Editable split diff](media/split-edit.png)

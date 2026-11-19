@@ -77,3 +77,21 @@ export function withChildAfter(tree, siblingId, node) {
   const next = walk(tree);
   return placed ? next : null;
 }
+
+// Puts `node` first in the children of `parentId` (null: no such parent, or a node with that id
+// already exists).
+export function withChildFirst(tree, parentId, node) {
+  if (findNode(tree, node.id) || !Array.isArray(findNode(tree, parentId)?.children)) {
+    return null;
+  }
+  const walk = (current) => {
+    const copy = { ...current };
+    if (current.id === parentId) {
+      copy.children = [node, ...current.children];
+    } else if (Array.isArray(current.children)) {
+      copy.children = current.children.map(walk);
+    }
+    return copy;
+  };
+  return walk(tree);
+}

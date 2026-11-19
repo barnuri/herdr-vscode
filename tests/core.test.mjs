@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseJsonc } from "../shared/jsonc.js";
 import { resolvePath, rootsFromWorkspace, rootFor, chooseContext, workspaceName } from "../shared/ws-core.js";
-import { parseStatus, parseNumstat, parseRemote, providerOf, diffRows, splitRows, parseHunks, parseLog, lineStartOffset } from "../shared/git-core.js";
+import { parseStatus, parseNumstat, parseRemote, providerOf, defaultBranchOf, diffRows, splitRows, parseHunks, parseLog, lineStartOffset } from "../shared/git-core.js";
 
 test("jsonc: comments, trailing commas, and // inside strings", () => {
   const text = `{
@@ -74,6 +74,9 @@ test("git status", () => {
 });
 
 test("remotes and providers", () => {
+  assert.equal(defaultBranchOf("origin/master\n"), "master");
+  assert.equal(defaultBranchOf("origin/release/2"), "release/2");
+  assert.equal(defaultBranchOf(""), null);
   assert.deepEqual(parseRemote("git@gitlab.com:acme/platform/web.git"), { host: "gitlab.com", path: "acme/platform/web" });
   assert.deepEqual(parseRemote("https://gitlab.com/acme/x/admin-console"), { host: "gitlab.com", path: "acme/x/admin-console" });
   assert.deepEqual(parseRemote("work-github:acme/releases.git"), { host: "work-github", path: "acme/releases" });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { copyName, pastePlan, lineAnchor, fileWebUrl, autoSaveDue, autoSaveMode } from "../shared/fileops-core.js";
+import { copyName, pastePlan, lineAnchor, fileWebUrl, remoteLinkItems, autoSaveDue, autoSaveMode } from "../shared/fileops-core.js";
 
 test("copyName picks the first free copy name", () => {
   assert.equal(copyName("a.txt", new Set(["a.txt"])), "a copy.txt");
@@ -26,6 +26,24 @@ test("remote file links carry the line anchor of each host", () => {
   assert.equal(fileWebUrl({ host: "gitlab.example.com", path: "g/r" }, "feat/x", "a.js"), "https://gitlab.example.com/g/r/-/blob/feat/x/a.js");
   assert.equal(fileWebUrl({ host: "example.com", path: "o/r" }, "main", "a.js"), null);
   assert.equal(fileWebUrl(null, "main", "a.js"), null);
+});
+
+test("remote link rows: one plain pair, or the default branch and the side branch by name", () => {
+  const one = remoteLinkItems([{ ref: "master", url: "u1" }]);
+  assert.deepEqual(one.map((item) => [item.kind, item.label, item.url]), [
+    ["open", "Git: Open Remote Link", "u1"],
+    ["copy", "Git: Copy Remote Link", "u1"],
+  ]);
+  const two = remoteLinkItems([{ ref: "master", url: "u1" }, { ref: "feat/x", url: "u2" }]);
+  assert.deepEqual(two.map((item) => [item.kind, item.label, item.url]), [
+    ["open", "Git: Open master Remote Link", "u1"],
+    ["open", "Git: Open feat/x Remote Link", "u2"],
+    ["copy", "Git: Copy master Remote Link", "u1"],
+    ["copy", "Git: Copy feat/x Remote Link", "u2"],
+  ]);
+  assert.equal(new Set(two.map((item) => item.id)).size, 4);
+  assert.deepEqual(remoteLinkItems([{ ref: "master", url: null }]), []);
+  assert.deepEqual(remoteLinkItems(null), []);
 });
 
 test("auto save waits for the pause, saves on blur, and respects off", () => {

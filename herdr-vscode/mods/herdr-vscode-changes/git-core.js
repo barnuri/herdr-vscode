@@ -125,6 +125,12 @@ export function parseRemote(url) {
   return null;
 }
 
+// The default branch from `git symbolic-ref --short refs/remotes/origin/HEAD` ("origin/master"), else null.
+export function defaultBranchOf(symbolicRef) {
+  const name = String(symbolicRef ?? "").trim().replace(/^origin\//, "");
+  return name && name !== "HEAD" ? name : null;
+}
+
 export function providerOf(host) {
   if (/(^|\.)github\.com$/i.test(host ?? "")) {
     return "github";

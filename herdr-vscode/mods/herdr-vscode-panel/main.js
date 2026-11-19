@@ -4,7 +4,7 @@ import { theme, layout, run, hc, exec, terminals, spaces, panes, shared, setShar
 import { ctx, baseName, workspace, rootFor, setActive, repoTop } from "./ws.js";
 import { findProject, pmOf } from "./scripts.js";
 import { showInViewer, viewerValue } from "./tabs.js";
-import { withContent, findNode, withChildAt, withChildAfter } from "./layout-core.js";
+import { withContent, findNode, withChildAt, withChildAfter, withChildFirst } from "./layout-core.js";
 import { parsePorts, workspaceProblems, pickChecks, parseCheckOutput, countProblems } from "./panel-core.js";
 import { panelTerminals, pickShown, isTerminalTab, fallbackTab, leadTerminal } from "./terminal-core.js";
 import { askConfirm, confirmMethods } from "./actions.js";
@@ -23,7 +23,9 @@ export default class HerdrVscodePanel extends View {
   static SPACE_LABEL_KEY = "herdr-vscode.space";
   static EMPTY_EDITOR_MOD = "herdr-vscode-empty";
   static MRU_KEY = "herdr-vscode.tabs.mru";
-  static REDIRECT_MS = 200;
+  static REDIRECT_MS = 50;
+  static FOCUS_WAIT_TICKS = 10;
+  static SHOW_KEY = "herdr-vscode.panel.show";
   static VIEWER_MODS = ["herdr-vscode-files", "herdr-vscode-changes"];
   static SIZE = 260;
   static MAXIMIZED_SIZE = 2000;
@@ -246,13 +248,15 @@ export default class HerdrVscodePanel extends View {
 
   apply(state = HerdrVscodePanel.state()) {
     const tree = layout();
-    const term = findNode(tree, "term");
-    if (!term) {
-      return;
-    }
     let next = tree;
     const content = this.want(state);
-    if (JSON.stringify(term.content) !== JSON.stringify(content)) {
+    // Herdr drops a terminal block whose terminal ended, so the main block may be gone: rebuild it.
+    if (!findNode(tree, "term")) {
+      next = withChildFirst(tree, HerdrVscodePanel.TERM_ROW, { id: "term", type: "block", content }) ?? tree;
+      if (next === tree) {
+        return;
+      }
+    } else if (JSON.stringify(findNode(tree, "term").content) !== JSON.stringify(content)) {
       next = withContent(next, "term", content) ?? next;
     }
     // The split shows a second shell beside the first, like VS Code's split terminal.
@@ -339,8 +343,58 @@ export default class HerdrVscodePanel extends View {
   // With terminal.inPanel, a terminal tab never shows in the editor: when one gets selected
   // (Running, a new terminal or agent, a tab key), its terminal shows in the panel and the
   // editor goes back to its last editor tab, or the empty editor.
+  // Shows `address` in the bottom panel and keeps the editor on an editor tab. pane.focus
+  // {terminal} shows the terminal's own tab unless a visible panel block already shows that terminal,
+  // so the editor tab is selected now and the focus waits for the block (focusPending).
+  moveToPanel(space, address) {
+    const allPanes = panes() ?? [];
+    const back = fallbackTab(space, allPanes, (shared(HerdrVscodePanel.MRU_KEY) ?? {})[space.id] ?? []);
+    this.commit({ ...HerdrVscodePanel.state(), view: HerdrVscodePanel.TERMINAL, shown: address, split: null });
+    run("layout.show", { id: "bottom" });
+    if (back) {
+      run("tab.select", { id: back });
+    } else {
+      run("tab.new", { space: space.id, name: "Welcome", mod: HerdrVscodePanel.EMPTY_EDITOR_MOD });
+    }
+    this.focusPending = { address, ticks: 0 };
+    this.editorSeen = null;
+  }
+
+  // Focuses the terminal once the panel block shows it (or after FOCUS_WAIT_TICKS).
+  focusPendingTerminal() {
+    const pending = this.focusPending;
+    if (!pending) {
+      return;
+    }
+    pending.ticks += 1;
+    const shown = findNode(layout(), "term")?.content?.terminal === pending.address;
+    if (shown || pending.ticks >= HerdrVscodePanel.FOCUS_WAIT_TICKS) {
+      this.focusPending = null;
+      run("pane.focus", { terminal: pending.address });
+    }
+  }
+
+  // A click in Running (or any mod) asks for a terminal with shared(SHOW_KEY) = { id, terminal, space }:
+  // the terminal's tab is never selected, so nothing flashes in the editor.
+  takeShowRequest() {
+    const request = shared(HerdrVscodePanel.SHOW_KEY);
+    if (!request || request.id === this.showDone) {
+      return false;
+    }
+    this.showDone = request.id;
+    const space = (spaces() ?? []).find((candidate) => candidate.id === request.space) ?? HerdrVscodePanel.activeSpace();
+    if (space && request.terminal) {
+      this.moveToPanel(space, request.terminal);
+    }
+    return true;
+  }
+
   redirect() {
     if (!settingsLoaded() || !HerdrVscodePanel.inPanel() || !this.bottom()) {
+      return;
+    }
+    this.focusPendingTerminal();
+    if (this.takeShowRequest()) {
       return;
     }
     const space = HerdrVscodePanel.activeSpace();
@@ -349,17 +403,7 @@ export default class HerdrVscodePanel extends View {
     if (!tab || !isTerminalTab(tab.id, allPanes)) {
       return;
     }
-    const address = leadTerminal(tab.id, allPanes);
-    const back = fallbackTab(space, allPanes, (shared(HerdrVscodePanel.MRU_KEY) ?? {})[space.id] ?? []);
-    if (back) {
-      run("tab.select", { id: back });
-    } else {
-      run("tab.new", { space: space.id, name: "Welcome", mod: HerdrVscodePanel.EMPTY_EDITOR_MOD });
-    }
-    this.commit({ ...HerdrVscodePanel.state(), view: HerdrVscodePanel.TERMINAL, shown: address, split: null });
-    run("layout.show", { id: "bottom" });
-    run("pane.focus", { terminal: address });
-    this.editorSeen = null;
+    this.moveToPanel(space, leadTerminal(tab.id, allPanes));
   }
 
   // What the editor shows: its tab and the last file or diff opened in its viewers.

@@ -3,9 +3,10 @@
 // into the popup copy: { label, icon, danger?, act: { type, ... } }.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, run, props, closeOverlay, openOverlay } from "herdr";
+import { theme, run, props, closeOverlay, openOverlay, setShared } from "herdr";
 import { setActive } from "./ws.js";
 import { askConfirm } from "./actions.js";
+import { terminalsInPanel } from "./settings.js";
 import { TEXT, Icon } from "./ui.js";
 
 class RunningMenu {
@@ -13,6 +14,7 @@ class RunningMenu {
   static STACK = "sidebar-views";
   static SCM_VIEW = "scm";
   static SIDEBAR = "sidebar";
+  static SHOW_KEY = "herdr-vscode.panel.show";
   static WIDTH = 240;
   static ROW_PX = 26;
   static HEAD_PX = 44;
@@ -52,8 +54,15 @@ class RunningMenu {
     if (row.space) {
       run("space.select", { id: row.space });
     }
-    run("tab.select", { id: row.tab });
-    run("pane.focus", { pane: row.pane });
+    // Terminals live in the bottom panel: ask it to show this one, so the terminal's tab never opens in the editor.
+    if (terminalsInPanel() && row.terminal) {
+      setShared(RunningMenu.SHOW_KEY, { id: `${Date.now()}-${Math.random()}`, terminal: row.terminal, space: row.space });
+      return;
+    }
+    if (row.tab) {
+      run("tab.select", { id: row.tab });
+    }
+    run("pane.focus", row.tab ? { pane: row.pane } : { terminal: row.terminal });
   }
 
   static newTab(folder, space) {
@@ -67,7 +76,7 @@ class RunningMenu {
   }
 
   static brief(row) {
-    return { pane: row.pane, tab: row.tab, space: row.space, label: row.label, title: row.title };
+    return { pane: row.pane, terminal: row.terminal, tab: row.tab, space: row.space, label: row.label, title: row.title };
   }
 
   static paneItems(row, folder, confirmKill) {

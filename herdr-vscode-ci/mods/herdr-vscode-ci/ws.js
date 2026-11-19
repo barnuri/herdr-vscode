@@ -49,6 +49,12 @@ export function ctx() {
   };
 }
 
+// The active space's folder only (the name in the top bar and the status bar), whatever file or terminal has focus.
+export function spaceCtx() {
+  const focus = focusInfo();
+  return { cwd: focus.space?.folder ?? null, on: focus.space?.machine ?? null, source: "space", root: null, focus };
+}
+
 // by "pick": you chose it (wins over the focused terminal until focus moves); "focus": followed.
 export function setActive(root, by = "pick") {
   const current = active();

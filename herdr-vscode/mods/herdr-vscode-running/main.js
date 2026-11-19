@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, panes, spaces, run, props, checking, watchFolder, home } from "herdr";
+import { theme, panes, terminals, spaces, run, props, checking, watchFolder, home } from "herdr";
 import { repoTop, baseName } from "./ws.js";
 import { confirmMethods } from "./actions.js";
 import { TEXT, SPIN_MS, Icon, IconButton, FileIcon, Dot, ConfirmView } from "./ui.js";
@@ -21,6 +21,8 @@ class HerdrVscodeRunning extends View {
   static ICON_PX = 14;
   static CHEVRON_PX = 12;
   static ROOTS_REFRESH_MS = 2000;
+  static PANEL_LABEL = "herdr-vscode.panel";
+  static SPACE_LABEL = "herdr-vscode.space";
   static STATE_DIR = ".local/state/herdr-folders";
   static DIR_KEY_PREFIX = "dir:";
   static SORT_LABELS = { opened: "Opened", status: "Status", name: "Name" };
@@ -159,8 +161,20 @@ class HerdrVscodeRunning extends View {
     return spaces().find((space) => space.tabs.some((candidate) => candidate.id === tab))?.machine ?? null;
   }
 
+  // Every running terminal: the panes of every tab, then the bottom panel's own shells, which have no pane.
+  static runningPanes() {
+    const shells = (terminals() ?? [])
+      .filter((terminal) => terminal.labels?.[HerdrVscodeRunning.PANEL_LABEL] === "1" && terminal.state === "live")
+      .map((terminal) => ({
+        pane: terminal.address, terminal: terminal.address, tab: null, space: terminal.labels?.[HerdrVscodeRunning.SPACE_LABEL] ?? null,
+        cwd: terminal.cwd ?? null, title: terminal.title ?? "", status: terminal.status ?? null, app: null,
+        program: terminal.program ?? null, branch: null, focused: false,
+      }));
+    return [...panes(), ...shells];
+  }
+
   refreshRoots(cx) {
-    const unknown = panes().filter((pane) => pane.terminal && pane.cwd && !(pane.cwd in this.roots));
+    const unknown = HerdrVscodeRunning.runningPanes().filter((pane) => pane.terminal && pane.cwd && !(pane.cwd in this.roots));
     if (unknown.length === 0) {
       return;
     }
@@ -341,7 +355,7 @@ class HerdrVscodeRunning extends View {
       return ConfirmView(this);
     }
     const colors = theme();
-    const folders = sortFolders(groupRunning({ panes: panes(), spaces: spaces(), roots: this.roots, orchOf: this.probe.orchOf() }), this.prefs.sort);
+    const folders = sortFolders(groupRunning({ panes: HerdrVscodeRunning.runningPanes(), spaces: spaces(), roots: this.roots, orchOf: this.probe.orchOf() }), this.prefs.sort);
     this.shownRepos = [];
     const tree = this.prefs.grouping === "tree" ? buildTree(folders) : [];
     const rows = this.prefs.grouping === "tree"

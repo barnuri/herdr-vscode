@@ -3,8 +3,8 @@ import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { theme, props, closeOverlay, openOverlay, shared, setShared, home } from "herdr";
 import { baseName, parentOf } from "./ws-core.js";
 import { TEXT, Icon, Button, FileIcon } from "./ui.js";
-import { CLIPBOARD_KEY } from "./fileops-core.js";
-import { fileWebLink } from "./remote-url.js";
+import { CLIPBOARD_KEY, remoteLinkItems } from "./fileops-core.js";
+import { fileWebLinks } from "./remote-url.js";
 
 const MOD = "herdr-vscode-workspace";
 const ITEM = 28;
@@ -82,6 +82,7 @@ function entryItems(menu) {
   const folder = menu.dir ? abs : parentOf(abs);
   const clip = shared(CLIPBOARD_KEY);
   const file = { root: menu.root.path, rel: menu.rel };
+  const hasLink = (menu.links ?? []).length > 0;
   return visible([
     { id: "preview", icon: "eye", label: "Open", cmd: { cmd: "preview", ...file }, off: menu.dir },
     { id: "side", icon: "split", label: "Open to the Side", cmd: { cmd: "openSide", ...file }, off: menu.dir },
@@ -97,10 +98,11 @@ function entryItems(menu) {
     { sep: true, id: "s3" },
     { id: "rename", icon: "pencil", label: "Rename…", dialog: { kind: KIND_RENAME_FILE, path: abs, name: baseName(abs) } },
     { id: "delete", icon: "trash", label: "Delete", cmd: { cmd: "delete", path: abs, dir: menu.dir } },
-    { sep: true, id: "s4", off: !menu.link },
-    { id: "remote-open", icon: "external", label: "Git: Open Remote Link", cmd: { cmd: "finder", path: menu.link }, off: !menu.link },
-    { id: "remote-copy", icon: "copy", label: "Git: Copy Remote Link", copy: menu.link, off: !menu.link },
-    { id: "history", icon: "history", label: "Git: View File History", cmd: { cmd: "fileHistory", ...file }, off: !menu.link || menu.dir },
+    { sep: true, id: "s4", off: !hasLink },
+    ...remoteLinkItems(menu.links).map((item) => (item.kind === "open"
+      ? { id: item.id, icon: "external", label: item.label, cmd: { cmd: "finder", path: item.url } }
+      : { id: item.id, icon: "copy", label: item.label, copy: item.url })),
+    { id: "history", icon: "history", label: "Git: View File History", cmd: { cmd: "fileHistory", ...file }, off: !hasLink || menu.dir },
   ]);
 }
 
@@ -109,10 +111,10 @@ export const menuMethods = {
     post(command);
   },
 
-  // An entry's menu first looks up its remote link (no link: no Git items).
+  // An entry's menu first looks up its remote links (none: no Git items).
   openMenu(menu) {
-    if (menu.kind === KIND_ENTRY && menu.link === undefined) {
-      fileWebLink(`${menu.root.path}/${menu.rel}`, { dir: menu.dir }).catch(() => null).then((link) => this.openMenu({ ...menu, link }));
+    if (menu.kind === KIND_ENTRY && menu.links === undefined) {
+      fileWebLinks(`${menu.root.path}/${menu.rel}`, { dir: menu.dir }).catch(() => []).then((links) => this.openMenu({ ...menu, links }));
       return;
     }
     const items = this.menuItems(menu);

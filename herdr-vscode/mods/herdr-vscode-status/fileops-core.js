@@ -71,6 +71,24 @@ export function fileWebUrl(remote, ref, rel, lines = null) {
   return `https://${remote.host}/${remote.path}/${blob}/${encodePath(ref)}/${encodePath(rel)}${lineAnchor(provider, lines)}`;
 }
 
+// The Git remote link menu rows for `links` ([{ ref, url }]): one link gives the plain
+// "Git: Open Remote Link"; on a side branch the default branch's link comes first and every
+// label names its branch. Each row: { id, kind: "open" | "copy", label, url }.
+export function remoteLinkItems(links) {
+  const shown = (links ?? []).filter((link) => link?.url);
+  const named = shown.length > 1;
+  const row = (kind, verb, link, index) => ({
+    id: `remote-${kind}${named ? `-${index}` : ""}`,
+    kind,
+    label: named ? `Git: ${verb} ${link.ref} Remote Link` : `Git: ${verb} Remote Link`,
+    url: link.url,
+  });
+  return [
+    ...shown.map((link, index) => row("open", "Open", link, index)),
+    ...shown.map((link, index) => row("copy", "Copy", link, index)),
+  ];
+}
+
 export const autoSaveMode = (value) => (value === AUTOSAVE_OFF ? AUTOSAVE_OFF : AUTOSAVE_DEFAULT);
 
 // Save now? Only a dirty, writable buffer in afterDelay mode, once the typing paused for `delay`

@@ -1,7 +1,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
 import { theme, shared, exec } from "herdr";
-import { ctx, contextKey, git, repoTop, changedAt, bump, baseName } from "./ws.js";
+import { spaceCtx, contextKey, git, repoTop, changedAt, bump, baseName } from "./ws.js";
 import { parseStatus, parseNumstat } from "./git-core.js";
 import { primaryAction, discardPlan, subjectInfo } from "./scm-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, tint, SPIN_MS } from "./ui.js";
@@ -163,7 +163,7 @@ export const panelMethods = {
   },
 
   followPanel(cx) {
-    const key = contextKey(ctx());
+    const key = contextKey(spaceCtx());
     if (key !== this.key) {
       this.key = key;
       this.note = null;
@@ -213,7 +213,7 @@ export const panelMethods = {
 
   async readRepo(context, key, cx) {
     const top = await repoTop(this.tops, context.cwd, context.on);
-    if (contextKey(ctx()) !== key) {
+    if (contextKey(spaceCtx()) !== key) {
       return;
     }
     if (!top) {
@@ -228,7 +228,7 @@ export const panelMethods = {
       runGit(["diff", ...NUMSTAT_ARGS]),
       runGit(["rev-parse", "--verify", "-q", "HEAD"]),
     ]);
-    if (contextKey(ctx()) !== key) {
+    if (contextKey(spaceCtx()) !== key) {
       return;
     }
     if (status.code !== 0) {
@@ -248,7 +248,7 @@ export const panelMethods = {
       this.refreshAgain = true;
       return;
     }
-    const context = ctx();
+    const context = spaceCtx();
     const key = contextKey(context);
     if (!context.cwd) {
       return;

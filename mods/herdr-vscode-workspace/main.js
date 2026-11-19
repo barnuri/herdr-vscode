@@ -255,6 +255,12 @@ class HerdrVscodeWorkspace extends View {
   // Focus moved to a terminal (or the terminal changed folder): a pick hands over to it.
   followFocus() {
     const focus = ctx().focus;
+    // A folder picked or followed in another space does not follow you here.
+    const spaceId = focus.space?.id ?? null;
+    if (this.spaceId !== undefined && spaceId !== this.spaceId && active()?.root && !rootFor(active().root, this.ws?.roots ?? [])) {
+      setShared(HerdrVscodeWorkspace.SHARED_ACTIVE, null);
+    }
+    this.spaceId = spaceId;
     const focusKey = `${focus.terminal ?? ""}|${focus.cwd ?? ""}`;
     if (focusKey === this.focusKey) {
       return;

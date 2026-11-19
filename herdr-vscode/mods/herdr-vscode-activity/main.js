@@ -220,16 +220,15 @@ class HerdrVscodeActivity extends View {
     const kinds = roots.map((root) => ciByRoot[root.path]?.kind).filter(Boolean);
     const ciDot = HerdrVscodeActivity.ciDotColor(kinds, t);
     const all = agents() ?? [];
-    const waiting = all.filter((agent) => HerdrVscodeActivity.WAITING_STATUSES.includes(agent.status)).length;
-    const working = all.filter((agent) => agent.status === HerdrVscodeActivity.WORKING_STATUS).length;
+    const total = all.length ? String(all.length) : null;
     const extensionBadges = HerdrVscodeActivity.views().filter((view) => view.extension?.badge)
       .map((view) => [view.id, badgeText(shared(view.extension.badge))]);
     return {
       ...Object.fromEntries(extensionBadges),
       scm: changed ? String(changed > HerdrVscodeActivity.BADGE_MAX ? `${HerdrVscodeActivity.BADGE_MAX}+` : changed) : null,
       ci: ciDot,
-      agents: working ? String(working) : null,
-      running: waiting ? String(waiting) : null,
+      agents: total,
+      running: total,
     };
   }
 

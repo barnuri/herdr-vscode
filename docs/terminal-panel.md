@@ -15,7 +15,7 @@ other Herdr clients still see them.
   panel shows a terminal, focus lands in the panel (`focused().pane` is null, `terminal` set).
 - A tab is a *terminal tab* when it has terminal panes and no mod pane
   (`shared/terminal-core.js`). The tab bar, the tab list and the switcher hide these tabs.
-- Redirect (herdr-vscode-panel, every 200 ms): when the active tab is a terminal tab (Running
+- Redirect (herdr-vscode-panel, every 50 ms): when the active tab is a terminal tab (Running
   click, new terminal or agent from +, `tab.next`, space switch), the panel shows its focused
   terminal (else its agent), opens itself, selects the most recent editor tab (else opens the
   empty editor "Welcome"), then focuses the terminal in the panel.
@@ -34,7 +34,7 @@ tab it was. Not needed, since a block can show a terminal in place.
 
 ## Limits
 
-- The redirect is polled: a terminal tab can flash in the editor for up to 200 ms.
+- The redirect is polled: a terminal tab can flash in the editor for up to 50 ms.
 - Tabs that mix a terminal with a mod pane stay editor tabs; their terminals are not listed.
 - Keyboard focus moves to the panel only while the panel is visible (the redirect opens it).
 - Split shows two listed terminals side by side, as before.

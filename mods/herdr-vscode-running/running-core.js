@@ -77,7 +77,7 @@ function rowOf(pane, place, orchOf) {
     pane: pane.pane,
     terminal: pane.terminal,
     tab: pane.tab,
-    space: place?.spaceId ?? null,
+    space: place?.spaceId ?? pane.space ?? null,
     spaceName: place?.spaceName ?? "",
     tabName: place?.tabName ?? "",
     kind: isAgent ? "agent" : "terminal",
