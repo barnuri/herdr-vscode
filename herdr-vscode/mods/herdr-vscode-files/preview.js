@@ -723,8 +723,6 @@ export const previewMethods = {
     const editable = !file.on && !IMAGE.test(file.rel) && showsCode && this.text !== undefined;
     const real = !file.untitled;
     return h_flex().h(30).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).text_size(TEXT.small)
-      .child(FileIcon(this.icons, abs, { size: 14 }))
-      .child(div().flex_none().max_w(320).truncate().font_medium().child(fileName(file.rel)))
       .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(parentFolder(file.rel)))
       .when(isMarkdown, (el) => el
         .child(IconButton({ id: "pv-md", icon: "eye", label: "Rendered", active: !this.mdCode, onClick: (cx) => this.setMdCode(false, cx), size: 22 }))

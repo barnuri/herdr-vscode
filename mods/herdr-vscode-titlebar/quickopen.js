@@ -4,9 +4,12 @@ import { theme, run, closeOverlay, props, shared, setShared, spaces, readTextFil
 import { workspace, git, baseName, ctx, rootFor } from "./ws.js";
 import { showInViewer } from "./tabs.js";
 import { describeTab } from "./kinds.js";
-import { rankFiles, matchPath, runsOf, parseQuery, symbolsOf, commandLabel, keyLabel, actionToRun, prepareFiles, scoreSlice, topFiles, queryWords, isPathQuery } from "./quickopen-core.js";
+import { rankFiles, matchPath, runsOf, parseQuery, symbolsOf, commandLabel, keyLabel, actionToRun, prepareFiles, scoreSlice, topFiles, queryWords } from "./quickopen-core.js";
 import { grepArgs, parseGrep, matchSnippet } from "./search-core.js";
 import { Icon, FileIcon, tint } from "./ui.js";
+
+// A typed path: absolute (/x), home (~/x), dot-relative (./x, ../x) or any path with a slash.
+const isPathQuery = (text) => /^(~\/?|\/|\.{1,2}\/)/.test(text) || text.includes("/");
 
 export const QO_ROW = 24;
 export const QO_ROWS = 18;
