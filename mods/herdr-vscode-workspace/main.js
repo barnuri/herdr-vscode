@@ -64,7 +64,11 @@ class HerdrVscodeWorkspace extends View {
     paste: "commandPaste",
     delete: "commandDelete",
     renameFile: "commandRenameFile",
+    newFile: "commandNewFile",
+    newUntitled: "commandNewUntitled",
   };
+  // First Untitled-N name that is free in the folder given as $1.
+  static UNTITLED_SCRIPT = 'n=1; while [ -e "$1/Untitled-$n" ]; do n=$((n+1)); done; printf "Untitled-%s" "$n"';
   static FILES_MOD = "herdr-vscode-files";
 
   static errorText(error) {
@@ -493,6 +497,40 @@ class HerdrVscodeWorkspace extends View {
     await runAction({ doing: "Renaming", done: `Renamed to ${name}`, root: parentOf(command.path), steps: [{ cmd: "mv", args: ["-n", command.path, target] }] });
   }
 
+  // Creates an empty file; the name may hold folders, which are made. Never replaces an existing file.
+  async commandNewFile(command) {
+    const rel = (command.name ?? "").trim();
+    const parts = rel.split("/");
+    if (!rel || rel.startsWith("/") || rel.endsWith("/") || parts.some((part) => part === "" || part === "." || part === "..")) {
+      toast(HerdrVscodeWorkspace.MOD, { title: "Not created", body: "Enter a file name, such as file.ts or folder/file.ts.", level: "error" });
+      return;
+    }
+    const target = `${command.dir}/${rel}`;
+    const exists = await exec("test", ["-e", target]).catch(() => null);
+    if (exists?.code === 0) {
+      toast(HerdrVscodeWorkspace.MOD, { title: "Not created", body: `${rel} already exists.`, level: "error" });
+      return;
+    }
+    const result = await runAction({
+      doing: "Creating", done: `Created ${rel}`, root: command.dir,
+      steps: [{ cmd: "mkdir", args: ["-p", parentOf(target)] }, { cmd: "touch", args: [target] }],
+    });
+    if (result.code === 0) {
+      this.commandPreview({ root: command.dir, rel });
+    }
+  }
+
+  // Plus button: a new Untitled-N file in the folder, opened at once (rename it from the Explorer).
+  async commandNewUntitled(command) {
+    const found = await exec("sh", ["-c", HerdrVscodeWorkspace.UNTITLED_SCRIPT, "sh", command.dir]).catch(() => null);
+    const name = found?.stdout?.trim();
+    if (found?.code !== 0 || !name) {
+      toast(HerdrVscodeWorkspace.MOD, { title: "Not created", body: found?.stderr?.trim() || "No free Untitled name.", level: "error" });
+      return;
+    }
+    await this.commandNewFile({ dir: command.dir, name });
+  }
+
   commandFinder(command) {
     exec("open", command.reveal ? ["-R", command.path] : [command.path]).catch(() => {});
   }
@@ -619,7 +657,7 @@ class HerdrVscodeWorkspace extends View {
         .child(Icon("layers", 13).text_color(t.dim))
         .child(div().flex_1().min_w(0).pl(6).truncate().font_medium().text_size(TEXT.body).child(HerdrVscodeWorkspace.workspaceTitle(ws)))
         .when(Boolean(ws), (row) => row
-          .child(IconButton({ id: "ws-add", icon: "plus", label: "Add Folder to Workspace…", size: 22, onClick: () => post({ cmd: "addFolder" }) }))
+          .child(IconButton({ id: "ws-add", icon: "plus", label: "New File", size: 22, onClick: () => post({ cmd: "newUntitled", dir: ws.roots[0]?.path }) }))
           .child(IconButton({ id: "ws-dots", icon: "dot-files", label: this.showDots ? "Hide dotfiles" : "Show dotfiles", active: !this.showDots, size: 22, onClick: (cx) => this.toggleDots(cx) }))
           .child(IconButton({ id: "ws-collapse", icon: "collapse", label: "Collapse Folders", size: 22, onClick: (cx) => this.collapseAll(cx) }))
           .child(IconButton({ id: "ws-refresh", icon: "refresh", label: "Refresh", size: 22, spinning: (this.loading?.size ?? 0) > 0, onClick: (cx) => this.refreshEverything(cx) })))

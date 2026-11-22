@@ -24,6 +24,8 @@ const KIND_ROOT = "root";
 const KIND_RENAME = "rename";
 const KIND_RENAME_FILE = "renameFile";
 const KIND_ENTRY = "entry";
+export const KIND_NEW_FILE = "newFile";
+const NEW_FILE_DIALOG_HEIGHT = 190;
 
 export const post = (command) => setShared(COMMAND_KEY, { ...command, id: `${Date.now()}-${Math.random().toString(ID_RADIX).slice(2, ID_SUFFIX_END)}` });
 
@@ -63,6 +65,8 @@ function rootItems(menu, ws) {
   const root = menu.root;
   const notFile = !ws?.file;
   return visible([
+    { id: "newfile", icon: "plus", label: "New File…", dialog: { kind: KIND_NEW_FILE, dir: root.path } },
+    { sep: true, id: "s0" },
     { id: "term", icon: "terminal", label: "Open in Terminal", cmd: { cmd: "terminal", path: root.path } },
     { id: "finder", icon: "folder", label: "Reveal in Finder", cmd: { cmd: "finder", path: root.path } },
     { id: "copy", icon: "copy", label: "Copy Path", copy: root.path },
@@ -84,6 +88,8 @@ function entryItems(menu) {
   const file = { root: menu.root.path, rel: menu.rel };
   const hasLink = (menu.links ?? []).length > 0;
   return visible([
+    { id: "newfile", icon: "plus", label: "New File…", dialog: { kind: KIND_NEW_FILE, dir: folder } },
+    { sep: true, id: "s0" },
     { id: "preview", icon: "eye", label: "Open", cmd: { cmd: "preview", ...file }, off: menu.dir },
     { id: "side", icon: "split", label: "Open to the Side", cmd: { cmd: "openSide", ...file }, off: menu.dir },
     { id: "term", icon: "terminal", label: "Open in Integrated Terminal", cmd: { cmd: "terminal", path: menu.dir ? abs : folder } },
@@ -166,7 +172,8 @@ export const menuMethods = {
   },
 
   openDialog(dialog) {
-    const height = dialog.kind === KIND_RENAME || dialog.kind === KIND_RENAME_FILE ? RENAME_DIALOG_HEIGHT : NEW_DIALOG_HEIGHT;
+    const height = dialog.kind === KIND_RENAME || dialog.kind === KIND_RENAME_FILE ? RENAME_DIALOG_HEIGHT
+      : dialog.kind === KIND_NEW_FILE ? NEW_FILE_DIALOG_HEIGHT : NEW_DIALOG_HEIGHT;
     openOverlay({ mod: MOD, kind: "dialog", width: DIALOG_WIDTH, height, props: { dialog } });
   },
 
@@ -175,6 +182,8 @@ export const menuMethods = {
     this.dlg = dialog;
     if (dialog.kind === KIND_RENAME || dialog.kind === KIND_RENAME_FILE) {
       this.nameInput = InputState.new({ value: dialog.name, placeholder: baseName(dialog.path) });
+    } else if (dialog.kind === KIND_NEW_FILE) {
+      this.nameInput = InputState.new({ value: "", placeholder: "name.ext or folder/name.ext" });
     } else {
       this.nameInput = InputState.new({ value: dialog.name ?? "", placeholder: "my-workspace" });
       this.newPaths = [...(dialog.paths ?? [])];
@@ -218,6 +227,21 @@ export const menuMethods = {
       .child(h_flex().gap(8).justify_end()
         .child(Button({ id: "cancel", label: "Cancel", onClick: closeThisOverlay }))
         .child(Button({ id: "ok", label: "Rename", primary: true, onClick: submit })));
+  },
+
+  newFileDialog(t, shell, dialog) {
+    const submit = () => {
+      post({ cmd: "newFile", dir: dialog.dir, name: this.nameInput.value().trim() });
+      closeThisOverlay();
+    };
+    return shell
+      .child(div().text_size(TEXT.title).font_semibold().child("New File"))
+      .child(this.inputBox(t, this.nameInput))
+      .child(div().text_size(TEXT.caption).text_color(t.dim).truncate().child(`In ${tildePath(dialog.dir)}. A path such as folder/file.ts creates the folders too. An existing file is never replaced.`))
+      .child(div().flex_1())
+      .child(h_flex().gap(8).justify_end()
+        .child(Button({ id: "cancel", label: "Cancel", onClick: closeThisOverlay }))
+        .child(Button({ id: "create", label: "Create", primary: true, disabled: !this.nameInput.value().trim(), onClick: submit })));
   },
 
   newFolderRow(t, path) {
@@ -270,6 +294,9 @@ export const menuMethods = {
     }
     if (dialog.kind === KIND_RENAME_FILE) {
       return this.renameFileDialog(t, shell, dialog);
+    }
+    if (dialog.kind === KIND_NEW_FILE) {
+      return this.newFileDialog(t, shell, dialog);
     }
     return this.newWorkspaceDialog(t, shell, dialog);
   },

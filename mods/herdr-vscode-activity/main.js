@@ -38,7 +38,7 @@ class HerdrVscodeActivity extends View {
   static VIEWS = [
     { id: "explorer", icon: "files", title: "Explorer (⌘⇧E)", name: "Explorer" },
     { id: "search", icon: "search", title: "Search (⌘⇧F)", name: "Search" },
-    { id: "scm", icon: "branch", title: "Source Control (⌘⇧G)", name: "Source Control" },
+    { id: "scm", icon: "source-control", title: "Source Control (⌘⇧G)", name: "Source Control" },
     { id: "history", icon: "history", title: "Git History", name: "Git History" },
     { id: "ci", icon: "ci", title: "CI / CD", name: "CI / CD" },
     { id: "running", icon: "play", title: "Running (⌘⇧R)", name: "Running" },

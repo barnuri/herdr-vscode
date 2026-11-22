@@ -30,6 +30,7 @@ Every user-facing setting, preference or toggle is stored with `shared/settings.
 | `activity.explorerSections` | layout default | Explorer sections shown (`timeline`, `npm`) |
 | `scm.view` | `"flat"` | Source Control "View as List" (`"flat"`) or "View as Tree" (`"tree"`) |
 | `scm.diffLayout` | `"inline"` | Diff layout: `"split"` (side by side) or `"inline"` |
+| `scm.splitRatio` | `0.5` | Side by side: the left side's share of the width (0.15–0.85), set by dragging the divider |
 | `scm.editButton` | `true` | Split diff header Edit button: swaps the right side for the whole working file in an editor (not aligned with the left). Temporary until herdr-app#1239 lands; off hides the button |
 | `files.autoSave` | `"afterDelay"` | Auto Save: `"afterDelay"` or `"off"` |
 | `files.blame` | `false` | Blame column in the file viewer |

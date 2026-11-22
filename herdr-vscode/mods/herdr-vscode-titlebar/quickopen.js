@@ -1,10 +1,10 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
-import { theme, run, closeOverlay, props, shared, setShared, spaces, readTextFile, commands, keys, window } from "herdr";
+import { theme, run, closeOverlay, props, shared, setShared, spaces, readTextFile, commands, keys, window, exec } from "herdr";
 import { workspace, git, baseName, ctx, rootFor } from "./ws.js";
 import { showInViewer } from "./tabs.js";
 import { describeTab } from "./kinds.js";
-import { rankFiles, matchPath, runsOf, parseQuery, symbolsOf, commandLabel, keyLabel, actionToRun, prepareFiles, scoreSlice, topFiles, queryWords } from "./quickopen-core.js";
+import { rankFiles, matchPath, runsOf, parseQuery, symbolsOf, commandLabel, keyLabel, actionToRun, prepareFiles, scoreSlice, topFiles, queryWords, isPathQuery } from "./quickopen-core.js";
 import { grepArgs, parseGrep, matchSnippet } from "./search-core.js";
 import { Icon, FileIcon, tint } from "./ui.js";
 
@@ -13,7 +13,8 @@ export const QO_ROWS = 18;
 export const QO_HEAD = 38;
 const RECENT_KEY = "herdr-vscode.goto.recent";
 const CMD_RECENT_KEY = "herdr-vscode.cmd.recent";
-const PLACEHOLDER = "Search files by name (append : to go to line or @ to go to symbol)";
+const PLACEHOLDER = "Search files by name, or type a path (/abs, ~/x, ../x) (append : to go to line or @ to go to symbol)";
+const PATH_SCRIPT = 'p="$1"; case "$p" in "~"|"~/"*) p="$HOME${p#\\~}";; /*) ;; *) p="$2/$p";; esac; d=$(dirname -- "$p") && [ -f "$p" ] && cd -- "$d" && printf "%s/%s" "$(pwd -P)" "$(basename -- "$p")"';
 const SLICE = 2500;
 const MAX_FILE_HITS = 200;
 const MAX_TEXT_HITS = 200;
@@ -81,6 +82,8 @@ export const quickMethods = {
     this.wheel = 0;
     this.textGen = 0;
     this.rankGen = 0;
+    this.pathGen = 0;
+    this.pathHit = null;
     this.prepared = null;
     this.fileHits = null;
     this.rowsCache = [];
@@ -152,7 +155,37 @@ export const quickMethods = {
     if (query.mode === "files" && query.text && this.prepared) {
       this.rankAsync(query.text, cx);
     }
+    if (query.mode === "files" && isPathQuery(query.text)) {
+      this.resolvePath(query.text, cx);
+    }
     this.refresh(cx);
+  },
+
+  // A typed path is relative to the current folder (`..` and `~` work), or absolute. It opens
+  // even outside the workspace; the row exists only when the file exists.
+  resolvePath(text, cx) {
+    const gen = ++this.pathGen;
+    cx.spawn(async (cx) => {
+      const file = await this.resolvePathQuery(text);
+      if (gen !== this.pathGen) {
+        return;
+      }
+      this.pathHit = { text, file };
+      this.refresh(cx);
+    });
+  },
+
+  async resolvePathQuery(text) {
+    const context = ctx();
+    const on = context.on ?? null;
+    const result = await exec("sh", ["-c", PATH_SCRIPT, "herdr-vscode-path", text, context.cwd ?? ""], { on }).catch(() => null);
+    const abs = result?.code === 0 ? result.stdout.trim() : "";
+    if (!abs) {
+      return null;
+    }
+    const slash = abs.lastIndexOf("/");
+    const dir = abs.slice(0, slash) || "/";
+    return { root: { name: baseName(dir) || "/", path: dir }, rel: abs.slice(slash + 1), on };
   },
 
   loadCurrentText(cx) {
@@ -405,12 +438,16 @@ export const quickMethods = {
       return recent.slice(0, MAX_RECENT_FILES)
         .map((item, index) => ({ ...this.fileRow(item, index === 0 ? "recently opened" : null, [], query.line), recent: true }));
     }
+    // A typed path that exists comes first, even outside the workspace.
+    const pathFile = this.pathHit?.text === query.text ? this.pathHit.file : null;
+    const pathRows = pathFile ? [this.fileRow(pathFile, "path", [], query.line)] : [];
     const recentHits = rankFiles(recent, query.text, MAX_RECENT_HITS);
     // The last finished ranking stays up until the one for the new query lands.
-    const others = (this.fileHits?.list ?? []).filter((item) => !recentHits.some((hit) => sameFile(hit, item)));
+    const others = (this.fileHits?.list ?? []).filter((item) => !recentHits.some((hit) => sameFile(hit, item)) && !(pathFile && sameFile(pathFile, item)));
     const out = [
-      ...recentHits.map((item, index) => ({ ...this.fileRow(item, index === 0 ? "recently opened" : null, item.at, query.line), recent: true })),
-      ...others.map((item, index) => this.fileRow(item, index === 0 ? "file results" : null, item.at, query.line)),
+      ...pathRows,
+      ...recentHits.map((item, index) => ({ ...this.fileRow(item, index === 0 && !pathRows.length ? "recently opened" : null, item.at, query.line), recent: true })),
+      ...others.map((item, index) => this.fileRow(item, index === 0 && !pathRows.length && !recentHits.length ? "file results" : null, item.at, query.line)),
     ];
     const ranking = !this.prepared || this.fileHits?.text !== query.text;
     if (!out.length) {

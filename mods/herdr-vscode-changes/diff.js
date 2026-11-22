@@ -38,10 +38,27 @@ const REMOVED = "-";
 const CONTEXT = " ";
 const HUNK_KEY_PREFIX = "h";
 const PLAIN_DIFF = ["--no-ext-diff", "--no-textconv", "--no-color"];
+// Side by side shows the whole file: the diff is read again with every line as context (display only;
+// hunks, staging and the hunk count keep the normal diff).
+const FULL_CONTEXT = 1000000;
+// Side by side: the left side's share of the row (scm.splitRatio), kept between SPLIT_MIN and SPLIT_MAX.
+const SPLIT_MIN = 0.15;
+const SPLIT_MAX = 0.85;
+const SPLIT_DEFAULT = 0.5;
+const SPLIT_DIVIDER_WIDTH = 6;
+function diffArgs(target, context = null) {
+  const args = baseDiffArgs(target);
+  if (!context) {
+    return args;
+  }
+  const at = args.indexOf("--");
+  return [...args.slice(0, at), `-U${context}`, ...args.slice(at)];
+}
+
 // Applies a patch to the index from a temp file; the patch travels as an argument, never as script.
 const APPLY = 'f=$(mktemp) || exit 1; printf "%s" "$1" > "$f"; shift; git "$@" "$f"; c=$?; rm -f "$f"; exit $c';
 
-function diffArgs(target) {
+function baseDiffArgs(target) {
   if (target.scope === "commit") {
     return ["--literal-pathspecs", "show", "--format=", "-m", "--first-parent", ...PLAIN_DIFF, target.sha, "--", target.path];
   }
@@ -97,6 +114,30 @@ const editableTarget = (target) => Boolean(target && !target.on && (target.untra
 const editButtonOn = () => getSetting("scm", "editButton", true) !== false;
 
 const isMergeDiff = (head) => /^diff --(cc|combined)/.test(head[0] ?? "");
+
+// Puts each hunk's header row before the first side-by-side row at or after the hunk's new start, so
+// hunk navigation and staging keep working on the whole-file rows.
+function spliceHunks(pairs, headers) {
+  const out = [];
+  let next = 0;
+  let lastNew = 0;
+  const anchorOf = (header) => {
+    const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(header.text);
+    const start = Number(match?.[1] ?? 0);
+    return start + (match?.[2] === "0" ? 1 : 0);
+  };
+  for (const row of pairs) {
+    // A side-by-side pair counts by its right side; a unified row by itself.
+    const side = row.kind === "pair" ? row.right : row;
+    const line = side?.next ?? lastNew + 1;
+    while (next < headers.length && anchorOf(headers[next]) <= line) {
+      out.push(headers[next++]);
+    }
+    out.push(row);
+    lastNew = side?.next ?? lastNew;
+  }
+  return [...out, ...headers.slice(next)];
+}
 
 export const diffMethods = {
   initDiff(options, cx) {
@@ -154,6 +195,7 @@ export const diffMethods = {
       this.hunk = 0;
       this.hunks = null;
       this.lastRaw = null;
+      this.fullLines = null;
     }
     this.loadDiff(cx);
   },
@@ -183,6 +225,12 @@ export const diffMethods = {
       this.problem = result.stderr.trim() || "git diff failed";
       return null;
     }
+    // Every line of the file is shown (unified and side by side); hunks, staging and the hunk count keep the normal diff.
+    this.fullLines = null;
+    const full = await git(diffArgs(target, FULL_CONTEXT), { cwd: target.root, on: target.on });
+    const fullLines = full.code === 0 ? full.stdout.replace(/\n$/, "").split("\n") : [];
+    const firstFull = fullLines.findIndex((line) => line.startsWith("@@"));
+    this.fullLines = firstFull < 0 ? null : fullLines.slice(firstFull);
     // Unchanged since the last poll: skip splitting and parsing.
     if (result.stdout === this.lastRaw && this.rows) {
       return null;
@@ -218,7 +266,13 @@ export const diffMethods = {
       this.hunks = null;
     }
     this.hunk = Math.min(this.hunk ?? 0, Math.max(0, hunkCount - 1));
-    this.pairs = splitRows(this.rows);
+    // Whole-file rows with the normal hunk headers spliced in; without them, the normal rows.
+    const headers = this.rows.filter((row) => row.kind === HUNK_ROW);
+    const whole = this.fullLines?.length
+      ? diffRows(this.fullLines.slice(0, MAX_ROWS).map((line) => line.replace(/\t/g, tabSpaces()))).filter((row) => row.kind !== HUNK_ROW)
+      : null;
+    this.lines = whole ? spliceHunks(whole, headers) : this.rows;
+    this.pairs = whole ? spliceHunks(splitRows(whole), headers) : splitRows(this.rows);
     this.adds = this.rows.filter((row) => row.kind === ADDED).length;
     this.dels = this.rows.filter((row) => row.kind === REMOVED).length;
   },
@@ -273,7 +327,7 @@ export const diffMethods = {
       return;
     }
     this.hunk = (this.hunk + step + count) % count;
-    const items = this.split ? this.pairs : this.rows;
+    const items = this.split ? this.pairs : this.lines;
     const index = items.findIndex((row) => row.kind === HUNK_ROW && row.hunk === this.hunk);
     if (index >= 0) {
       this.scroller.scroll_to_item(index, "top");
@@ -434,6 +488,44 @@ export const diffMethods = {
         .child(unstage ? "Unstage Hunk" : "Stage Hunk"));
   },
 
+  splitRatio() {
+    const ratio = this.dragRatio ?? getSetting("scm", "splitRatio", SPLIT_DEFAULT);
+    return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, Number(ratio) || SPLIT_DEFAULT));
+  },
+
+  splitWidth() {
+    return `${Math.round(this.splitRatio() * 1000) / 10}%`;
+  },
+
+  // The divider between the sides: drag it left or right (the whole diff view follows the pointer).
+  splitDivider(colors) {
+    return div().w(SPLIT_DIVIDER_WIDTH).h_full().flex_none().flex().justify_center().cursor_col_resize()
+      .on_mouse_down("left", (_event, cx) => {
+        this.splitDragging = true;
+        cx.stop_propagation();
+      })
+      .child(div().w(1).h_full().bg(colors.border));
+  },
+
+  moveSplitDrag(event, cx) {
+    const width = event.bounds?.width;
+    if (!this.splitDragging || !width || !event.local_position) {
+      return;
+    }
+    this.dragRatio = event.local_position.x / width;
+    cx.notify();
+  },
+
+  endSplitDrag(cx) {
+    if (!this.splitDragging) {
+      return;
+    }
+    this.splitDragging = false;
+    setSetting("scm", "splitRatio", this.splitRatio());
+    this.dragRatio = null;
+    cx.notify();
+  },
+
   setSplit(split, cx) {
     this.split = split;
     if (!split) {
@@ -441,6 +533,9 @@ export const diffMethods = {
     } else {
       this.loadWorkingText(this.target, cx).then(() => cx.notify());
     }
+    // The whole-file rows are read on the next load, so reload now.
+    this.lastRaw = null;
+    this.loadDiff(cx);
     setSetting("scm", "diffLayout", split ? DIFF_SPLIT : DIFF_INLINE);
     cx.notify();
   },
@@ -495,7 +590,11 @@ export const diffMethods = {
       return h_flex().h(height).w_full().px(10).items_center().text_color(colors.dim).child(row.text);
     }
     if (this.split) {
-      return h_flex().h(height).w_full().child(this.cell(colors, syntax, row.left, lang, "left")).child(div().w(1).h_full().bg(colors.border)).child(this.cell(colors, syntax, row.right, lang, "right"));
+      // Each side takes half the row, so a long line on one side never pushes the other off screen.
+      return h_flex().h(height).w_full()
+        .child(div().w(this.splitWidth()).min_w(0).h_full().overflow_hidden().child(this.cell(colors, syntax, row.left, lang, "left")))
+        .child(this.splitDivider(colors))
+        .child(div().flex_1().min_w(0).h_full().overflow_hidden().child(this.cell(colors, syntax, row.right, lang, "right")));
     }
     return h_flex().h(height).w_full().child(this.cell(colors, syntax, row, lang, "inline"));
   },
@@ -525,13 +624,14 @@ export const diffMethods = {
     };
     const drawRange = (range) => items.slice(range.start, range.end).map(leftRow);
     return h_flex().id("d-body").flex_1().min_h(0).font_family(codeFont()).text_size(size)
-      .child(div().flex_1().min_w(0).h_full().relative()
+      .on_mouse_move((event, cx) => this.moveSplitDrag(event, cx))
+      .child(div().w(this.splitWidth()).min_w(0).h_full().relative()
         .child(v_virtual_list(listId, items.length, height, itemKey, drawRange)
           .track_scroll(this.scroller)
           .on_item_click((key, cx) => this.selectHunkByKey(key, cx))
           .size_full())
         .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0()))
-      .child(div().w(1).h_full().bg(colors.border))
+      .child(this.splitDivider(colors))
       .child(div().id("d-editor").flex_1().min_w(0).h_full()
         .on_key_down((event, cx) => {
           if (event.key === "s" && event.modifiers?.platform) {
@@ -550,18 +650,20 @@ export const diffMethods = {
     if (this.split && this.editor) {
       return this.editableBody(colors, syntax, lang, size, height);
     }
-    const items = this.split ? this.pairs : this.rows;
+    const items = this.split ? this.pairs : this.lines;
     const listId = `diff-${this.diffKey}-${this.split ? "s" : "i"}`;
     const itemKey = (index) => (items[index]?.kind === HUNK_ROW ? `${HUNK_KEY_PREFIX}${items[index].hunk}` : `r${index}`);
     const drawRange = (range) => items.slice(range.start, range.end).map((row) => this.diffRow(colors, syntax, lang, height, row));
     // Widest line sets the content width, so long lines scroll sideways instead of clipping.
+    // Side by side, each side gets half the width, so the content is twice the widest side.
     let widest = 0;
     for (const row of items) {
-      const width = this.split ? (row.left?.text?.length ?? 0) + (row.right?.text?.length ?? 0) : (row.text?.length ?? 0);
+      const width = this.split ? 2 * Math.max(row.left?.text?.length ?? 0, row.right?.text?.length ?? 0) : (row.text?.length ?? 0);
       widest = Math.max(widest, width);
     }
     const minWidth = Math.max(DIFF_MIN_WIDTH, (widest * DIFF_CHAR_RATIO + DIFF_GUTTER) * size);
     return div().id("d-body").flex_1().min_h(0).relative().font_family(codeFont()).text_size(size)
+      .on_mouse_move((event, cx) => this.moveSplitDrag(event, cx))
       .child(div().id("d-x").size_full().overflow_x_scrollbar()
         .child(div().h_full().min_w(minWidth)
           .child(v_virtual_list(listId, items.length, height, itemKey, drawRange)
@@ -578,6 +680,7 @@ export const diffMethods = {
     if (!target) {
       return root.child(Message("Pick a file in Changes to see its diff here."));
     }
+    root.on_mouse_up("left", (_event, cx) => this.endSplitDrag(cx));
     root.child(this.diffHeader(colors, target));
     if (this.problem) {
       return root.child(Message(this.problem));

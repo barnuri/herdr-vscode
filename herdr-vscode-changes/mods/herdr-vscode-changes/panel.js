@@ -1,8 +1,9 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
 import { theme, shared, exec } from "herdr";
-import { spaceCtx, contextKey, git, repoTop, changedAt, bump, baseName } from "./ws.js";
+import { ctx, spaceCtx, focusInfo, active, contextKey, git, repoTop, changedAt, bump, baseName } from "./ws.js";
 import { parseStatus, parseNumstat } from "./git-core.js";
+import { chooseContext } from "./ws-core.js";
 import { primaryAction, discardPlan, subjectInfo } from "./scm-core.js";
 import { TEXT, Icon, IconButton, FileIcon, Message, tint, SPIN_MS } from "./ui.js";
 import { isLight } from "./icons-core.js";
@@ -162,8 +163,27 @@ export const panelMethods = {
     this.message.on("change", (_e, cx) => cx.notify());
   },
 
+  // The repo to show. A repo picked here wins until focus moves to another terminal (or its folder
+  // changes). Focus on a terminal shows that terminal's repo. Focus on a mod pane keeps the last one.
+  scmContext() {
+    const focus = focusInfo();
+    const focusKey = `${focus.terminal ?? ""}|${focus.cwd ?? ""}`;
+    if (focus.terminal && focusKey !== this.focusKey) {
+      this.focusKey = focusKey;
+      this.focusAt = Date.now();
+    }
+    const pick = active();
+    if (pick?.by === "pick" && pick.at > (this.focusAt ?? 0)) {
+      return ctx();
+    }
+    if (focus.terminal) {
+      this.lastContext = chooseContext({ focus, roots: workspace()?.roots ?? [], active: null, spaceFolder: focus.space?.folder ?? null });
+    }
+    return this.lastContext ?? spaceCtx();
+  },
+
   followPanel(cx) {
-    const key = contextKey(spaceCtx());
+    const key = contextKey(this.scmContext());
     if (key !== this.key) {
       this.key = key;
       this.note = null;
@@ -213,7 +233,7 @@ export const panelMethods = {
 
   async readRepo(context, key, cx) {
     const top = await repoTop(this.tops, context.cwd, context.on);
-    if (contextKey(spaceCtx()) !== key) {
+    if (contextKey(this.scmContext()) !== key) {
       return;
     }
     if (!top) {
@@ -228,7 +248,7 @@ export const panelMethods = {
       runGit(["diff", ...NUMSTAT_ARGS]),
       runGit(["rev-parse", "--verify", "-q", "HEAD"]),
     ]);
-    if (contextKey(spaceCtx()) !== key) {
+    if (contextKey(this.scmContext()) !== key) {
       return;
     }
     if (status.code !== 0) {
@@ -248,7 +268,7 @@ export const panelMethods = {
       this.refreshAgain = true;
       return;
     }
-    const context = spaceCtx();
+    const context = this.scmContext();
     const key = contextKey(context);
     if (!context.cwd) {
       return;
@@ -886,7 +906,9 @@ export const panelMethods = {
     const infoColor = info.level === "over" ? colors.ansi1 : info.level === "long" ? colors.ansi3 : colors.dim;
     return v_flex().id("c-card").flex_none().rounded(2).border_1().border_color(this.amend ? colors.ansi3 : colors.border).bg(colors.input ?? colors.background)
       .on_key_down((event, cx) => {
-        if (event.key !== "enter" || !event.modifiers?.platform) {
+        // ⌘Enter, ⌥Enter and ⌃Enter commit; a plain Enter is a new line.
+        const modifiers = event.modifiers ?? {};
+        if (event.key !== "enter" || !(modifiers.platform || modifiers.alt || modifiers.control)) {
           return;
         }
         cx.stop_propagation();

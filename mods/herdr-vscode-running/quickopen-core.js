@@ -222,6 +222,9 @@ export function runsOf(text, at = [], offset = 0) {
   return runs;
 }
 
+// A typed path: absolute (/x), home (~/x), dot-relative (./x, ../x) or any path with a slash.
+export const isPathQuery = (text) => /^(~\/?|\/|\.{1,2}\/)/.test(text) || text.includes("/");
+
 const optionalNumber = (text) => (text ? Number(text) : null);
 
 // Prefixes as in VS Code: > commands, @ symbols, : line, % text, ? help.
