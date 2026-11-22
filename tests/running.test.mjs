@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { groupRunning, rollupStatus, sortFolders, planClose, buildTree, displayTitle } from "../mods/herdr-vscode-running/running-core.js";
+import { groupRunning, rollupStatus, sortFolders, planClose, buildTree, displayTitle, isOrchPane, filterRunningPanes } from "../mods/herdr-vscode-running/running-core.js";
 import { pickPrefs, DEFAULT_PREFS } from "../mods/herdr-vscode-running/running-core.js";
 
 const spaces = [{ id: "s1", name: "work", tabs: [{ id: "t1", name: "fix" }, { id: "t2", name: "" }] }];
@@ -134,4 +134,24 @@ test("orch: an idle agent with fresh orch activity or live child jobs shows as o
 test("pickPrefs reads cardBackgrounds", () => {
   assert.equal(pickPrefs({}).cardBackgrounds, true);
   assert.equal(pickPrefs({ cardBackgrounds: false }).cardBackgrounds, false);
+});
+
+test("filterRunningPanes hides orch markers and keeps normal panes", () => {
+  const normal = pane({ pane: "normal", title: "editor" });
+  const orchByLabel = pane({ pane: "label", labels: { "orch": "1" } });
+  const orchByRun = pane({ pane: "run", labels: { "run": "fix-login" } });
+  const orchByNode = pane({ pane: "node", labels: { "node": "a1" } });
+  const orchBySpace = pane({ pane: "space", labels: { "herdr.space": "orch" } });
+  const orchByName = pane({ pane: "name", title: "orch node" });
+
+  assert.equal(isOrchPane(normal), false);
+  assert.equal(isOrchPane(orchByLabel), true);
+  assert.equal(isOrchPane(orchByRun), true);
+  assert.equal(isOrchPane(orchByNode), true);
+  assert.equal(isOrchPane(orchBySpace), true);
+  assert.equal(isOrchPane(orchByName), true);
+  assert.deepEqual(filterRunningPanes([normal, orchByLabel, orchByRun, orchByNode, orchBySpace, orchByName], true).map((item) => item.pane), ["normal"]);
+  assert.equal(filterRunningPanes([normal, orchByLabel], false).length, 2);
+  assert.equal(pickPrefs({ hideOrchTerminals: true }).hideOrchTerminals, true);
+  assert.equal(pickPrefs({}).hideOrchTerminals, false);
 });

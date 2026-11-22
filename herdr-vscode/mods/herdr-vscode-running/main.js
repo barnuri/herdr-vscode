@@ -5,7 +5,7 @@ import { repoTop, baseName } from "./ws.js";
 import { confirmMethods } from "./actions.js";
 import { TEXT, SPIN_MS, Icon, IconButton, FileIcon, Dot, ConfirmView } from "./ui.js";
 import { loadIcons } from "./icons.js";
-import { groupRunning, sortFolders, buildTree, planClose, SORTS, GROUPINGS, CLOSE_MODES } from "./running-core.js";
+import { groupRunning, sortFolders, buildTree, planClose, filterRunningPanes, SORTS, GROUPINGS, CLOSE_MODES } from "./running-core.js";
 import { loadPrefs, savePrefs, DEFAULT_PREFS } from "./running-prefs.js";
 import RunningMenu from "./running-menu.js";
 import RunningProbe from "./running-probe.js";
@@ -227,6 +227,8 @@ class HerdrVscodeRunning extends View {
       .child(textButton("grouping", this.prefs.grouping === "tree" ? "Tree" : "Folders", "Group by folder or as a tree",
         (_event, cx) => this.setPref({ grouping: HerdrVscodeRunning.next(GROUPINGS, this.prefs.grouping) }, cx)))
       .child(div().flex_1())
+      .child(IconButton({ id: "orch", icon: "eye", label: this.prefs.hideOrchTerminals ? "Show orch terminals" : "Hide orch terminals", active: this.prefs.hideOrchTerminals,
+        onClick: (cx) => this.setPref({ hideOrchTerminals: !this.prefs.hideOrchTerminals }, cx) }))
       .child(IconButton({ id: "cards", icon: "layout", label: "Folder card backgrounds", active: this.prefs.cardBackgrounds,
         onClick: (cx) => this.setPref({ cardBackgrounds: !this.prefs.cardBackgrounds }, cx) }))
       .child(IconButton({ id: "spacing", icon: "list", label: this.twoRows() ? "Two-row items (click for one row)" : "One-row items (click for two rows)",
@@ -355,7 +357,8 @@ class HerdrVscodeRunning extends View {
       return ConfirmView(this);
     }
     const colors = theme();
-    const folders = sortFolders(groupRunning({ panes: HerdrVscodeRunning.runningPanes(), spaces: spaces(), roots: this.roots, orchOf: this.probe.orchOf() }), this.prefs.sort);
+    const panes = filterRunningPanes(HerdrVscodeRunning.runningPanes(), this.prefs.hideOrchTerminals);
+    const folders = sortFolders(groupRunning({ panes, spaces: spaces(), roots: this.roots, orchOf: this.probe.orchOf() }), this.prefs.sort);
     this.shownRepos = [];
     const tree = this.prefs.grouping === "tree" ? buildTree(folders) : [];
     const rows = this.prefs.grouping === "tree"

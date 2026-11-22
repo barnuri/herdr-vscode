@@ -15,11 +15,11 @@ export const SORTS = ["opened", "status", "name"];
 export const GROUPINGS = ["folder", "tree"];
 // Keys shared with herdr-folders in ~/.local/state/herdr-folders/state.json, with their types.
 const PREF_TYPES = {
-  sort: "string", grouping: "string", spacing: "string", confirmKill: "boolean", collapsible: "boolean", collapsed: "object", cardBackgrounds: "boolean",
+  sort: "string", grouping: "string", spacing: "string", confirmKill: "boolean", collapsible: "boolean", collapsed: "object", cardBackgrounds: "boolean", hideOrchTerminals: "boolean",
 };
 
 export const DEFAULT_PREFS = {
-  sort: "opened", grouping: "folder", spacing: "comfortable", confirmKill: false, collapsible: true, collapsed: {}, cardBackgrounds: true,
+  sort: "opened", grouping: "folder", spacing: "comfortable", confirmKill: false, collapsible: true, collapsed: {}, cardBackgrounds: true, hideOrchTerminals: false,
 };
 
 export function pickPrefs(parsed) {
@@ -36,6 +36,24 @@ export function pickPrefs(parsed) {
 }
 
 export const CLOSE_MODES = ["empty-folders", "idle-agents-and-empty-folders", "terminals", "all"];
+
+export function isOrchPane(pane) {
+  const labels = pane?.labels;
+  if (labels && typeof labels === "object") {
+    if (labels["orch"] === "1" || labels["herdr.space"] === "orch") {
+      return true;
+    }
+    if (typeof labels["run"] === "string" && labels["run"] || typeof labels["node"] === "string" && labels["node"]) {
+      return true;
+    }
+  }
+  const names = [pane?.title, pane?.label, pane?.name, pane?.app].filter((value) => typeof value === "string");
+  return names.some((name) => /(?:^|[^a-z])orch(?:[^a-z]|$)/i.test(name));
+}
+
+export function filterRunningPanes(panes, hideOrchTerminals) {
+  return hideOrchTerminals ? panes.filter((pane) => !isOrchPane(pane)) : panes;
+}
 
 function baseName(path) {
   return String(path).split("/").filter(Boolean).pop() ?? path;
