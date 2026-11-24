@@ -170,7 +170,18 @@ class HerdrVscodeRunning extends View {
         cwd: terminal.cwd ?? null, title: terminal.title ?? "", status: terminal.status ?? null, app: null,
         program: terminal.program ?? null, branch: null, focused: false,
       }));
-    return [...panes(), ...shells];
+    // One row per terminal: a terminal shown in two panes (a tab and the bottom panel) lists once.
+    const seen = new Set();
+    return [...panes(), ...shells].filter((pane) => {
+      if (!pane.terminal) {
+        return true;
+      }
+      if (seen.has(pane.terminal)) {
+        return false;
+      }
+      seen.add(pane.terminal);
+      return true;
+    });
   }
 
   refreshRoots(cx) {
