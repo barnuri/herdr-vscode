@@ -31,14 +31,13 @@ class RunningMenu {
     };
   }
 
-  // One pane closes at once unless confirmKill; more always ask.
-  static closeRows(title, rows, confirmKill) {
+  // One pane (or a whole folder, `direct`) closes at once unless confirmKill; bulk closes ask.
+  static closeRows(title, rows, confirmKill, direct = false) {
     if (rows.length === 0) {
       return;
     }
-    if (rows.length === 1 && !confirmKill) {
-      const [step] = RunningMenu.closeAction(rows).steps;
-      run(step.command, step.args);
+    if ((rows.length === 1 || direct) && !confirmKill) {
+      RunningMenu.closeAction(rows).steps.forEach((step) => run(step.command, step.args));
       return;
     }
     askConfirm(RunningMenu.MOD, {
@@ -99,7 +98,7 @@ class RunningMenu {
     }
     items.push({
       label: "Close all", icon: "trash", danger: true,
-      act: { type: "close", title: `Close everything in ${folder.name}?`, rows: folder.rows.map(RunningMenu.brief), confirmKill },
+      act: { type: "close", title: `Close everything in ${folder.name}?`, rows: folder.rows.map(RunningMenu.brief), confirmKill, direct: true },
     });
     return items;
   }
@@ -114,7 +113,7 @@ class RunningMenu {
       focus: () => RunningMenu.focusRow(act.row),
       newTab: () => RunningMenu.newTab(act.folder, act.space),
       scm: () => RunningMenu.showChanges(act.path, act.name),
-      close: () => RunningMenu.closeRows(act.title, act.rows, act.confirmKill),
+      close: () => RunningMenu.closeRows(act.title, act.rows, act.confirmKill, act.direct),
     };
     actions[act.type]?.();
   }

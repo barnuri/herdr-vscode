@@ -198,8 +198,8 @@ class HerdrVscodeRunning extends View {
     });
   }
 
-  closeRows(title, rows) {
-    RunningMenu.closeRows(title, rows, this.prefs.confirmKill);
+  closeRows(title, rows, direct = false) {
+    RunningMenu.closeRows(title, rows, this.prefs.confirmKill, direct);
   }
 
   closeMode(folders, mode, cx) {
@@ -298,7 +298,7 @@ class HerdrVscodeRunning extends View {
       .when(Boolean(folder.status), (el) => el.child(HerdrVscodeRunning.statusMark(folder.status, colors)))
       .child(div().flex_none().text_size(TEXT.caption).text_color(colors.dim).child(HerdrVscodeRunning.counts(folder)))
       .child(IconButton({ id: `new-${folder.path}`, icon: "plus", label: "New terminal here", onClick: () => this.newTerminal(folder) }))
-      .child(IconButton({ id: `kill-${folder.path}`, icon: "x", label: "Close everything here", onClick: () => this.closeRows(`Close everything in ${folder.name}?`, folder.rows) }));
+      .child(IconButton({ id: `kill-${folder.path}`, icon: "x", label: "Close everything here", onClick: () => this.closeRows(`Close everything in ${folder.name}?`, folder.rows, true) }));
   }
 
 

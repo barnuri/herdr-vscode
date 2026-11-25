@@ -170,7 +170,18 @@ class HerdrVscodeRunning extends View {
         cwd: terminal.cwd ?? null, title: terminal.title ?? "", status: terminal.status ?? null, app: null,
         program: terminal.program ?? null, branch: null, focused: false,
       }));
-    return [...panes(), ...shells];
+    // One row per terminal: a terminal shown in two panes (a tab and the bottom panel) lists once.
+    const seen = new Set();
+    return [...panes(), ...shells].filter((pane) => {
+      if (!pane.terminal) {
+        return true;
+      }
+      if (seen.has(pane.terminal)) {
+        return false;
+      }
+      seen.add(pane.terminal);
+      return true;
+    });
   }
 
   refreshRoots(cx) {
@@ -187,8 +198,8 @@ class HerdrVscodeRunning extends View {
     });
   }
 
-  closeRows(title, rows) {
-    RunningMenu.closeRows(title, rows, this.prefs.confirmKill);
+  closeRows(title, rows, direct = false) {
+    RunningMenu.closeRows(title, rows, this.prefs.confirmKill, direct);
   }
 
   closeMode(folders, mode, cx) {
@@ -287,7 +298,7 @@ class HerdrVscodeRunning extends View {
       .when(Boolean(folder.status), (el) => el.child(HerdrVscodeRunning.statusMark(folder.status, colors)))
       .child(div().flex_none().text_size(TEXT.caption).text_color(colors.dim).child(HerdrVscodeRunning.counts(folder)))
       .child(IconButton({ id: `new-${folder.path}`, icon: "plus", label: "New terminal here", onClick: () => this.newTerminal(folder) }))
-      .child(IconButton({ id: `kill-${folder.path}`, icon: "x", label: "Close everything here", onClick: () => this.closeRows(`Close everything in ${folder.name}?`, folder.rows) }));
+      .child(IconButton({ id: `kill-${folder.path}`, icon: "x", label: "Close everything here", onClick: () => this.closeRows(`Close everything in ${folder.name}?`, folder.rows, true) }));
   }
 
 
