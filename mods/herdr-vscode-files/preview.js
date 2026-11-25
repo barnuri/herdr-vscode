@@ -509,7 +509,7 @@ export const previewMethods = {
       .child(div().w(layout.size * GUTTER_RATIO).pr(layout.size * GUTTER_PAD_RATIO).flex_none().text_right().text_color(t.dim).child(String(lineNumber)))
       .child(h_flex().flex_1().min_w(0).whitespace_nowrap()
         .children(linkedRunChildren(runs, layout.where ? linksIn(layout.lines[i], layout.where) : [], {
-          idPrefix: `l${i}`, colorOf: (run) => (run.kind ? layout.colors[run.kind] : t.foreground), linkColor: t.accent,
+          colorOf: (run) => (run.kind ? layout.colors[run.kind] : t.foreground), linkColor: t.accent,
         })));
   },
 

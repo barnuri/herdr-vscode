@@ -196,6 +196,8 @@ export const diffMethods = {
       this.hunks = null;
       this.lastRaw = null;
       this.fullLines = null;
+      // The scroll handle is shared by every diff: start each new file at its top.
+      this.scroller.scroll_to_item(0, "top");
     }
     this.loadDiff(cx);
   },
@@ -230,7 +232,7 @@ export const diffMethods = {
     const full = await git(diffArgs(target, FULL_CONTEXT), { cwd: target.root, on: target.on });
     const fullLines = full.code === 0 ? full.stdout.replace(/\n$/, "").split("\n") : [];
     const firstFull = fullLines.findIndex((line) => line.startsWith("@@"));
-    this.fullLines = firstFull < 0 ? null : fullLines.slice(firstFull);
+    this.fullLines = full.code === 0 && firstFull >= 0 ? fullLines.slice(firstFull) : null;
     // Unchanged since the last poll: skip splitting and parsing.
     if (result.stdout === this.lastRaw && this.rows) {
       return null;
@@ -317,7 +319,7 @@ export const diffMethods = {
       .child(div().w(size * MARK_WIDTH_FACTOR).flex_none().text_center().text_color(kindColor(colors, row.kind)).child(row.kind === CONTEXT ? "" : row.kind))
       .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap()
         .children(linkedRunChildren(runs, this.linkBase ? linksIn(row.text, this.linkBase) : [], {
-          idPrefix: `${side}${row.old ?? ""}-${row.next ?? ""}`, colorOf: (run) => (run.kind ? syntax[run.kind] : colors.foreground), linkColor: colors.accent,
+          colorOf: (run) => (run.kind ? syntax[run.kind] : colors.foreground), linkColor: colors.accent,
         })));
   },
 
@@ -497,14 +499,17 @@ export const diffMethods = {
     return `${Math.round(this.splitRatio() * 1000) / 10}%`;
   },
 
-  // The divider between the sides: drag it left or right (the whole diff view follows the pointer).
   splitDivider(colors) {
-    return div().w(SPLIT_DIVIDER_WIDTH).h_full().flex_none().flex().justify_center().cursor_col_resize()
-      .on_mouse_down("left", (_event, cx) => {
-        this.splitDragging = true;
-        cx.stop_propagation();
-      })
+    return div().w(SPLIT_DIVIDER_WIDTH).h_full().flex_none().flex().justify_center()
       .child(div().w(1).h_full().bg(colors.border));
+  },
+
+  // Drag it left or right (the whole diff view follows the pointer). Never inside a virtual list's rows: they are rebuilt every frame.
+  draggableDivider(element) {
+    return element.id("d-divider").cursor_col_resize().on_mouse_down("left", (_event, cx) => {
+      this.splitDragging = true;
+      cx.stop_propagation();
+    });
   },
 
   moveSplitDrag(event, cx) {
@@ -536,6 +541,8 @@ export const diffMethods = {
     // The whole-file rows are read on the next load, so reload now.
     this.lastRaw = null;
     this.loadDiff(cx);
+    // Inline and side by side are separate lists with different heights: start at the top of each.
+    this.scroller.scroll_to_item(0, "top");
     setSetting("scm", "diffLayout", split ? DIFF_SPLIT : DIFF_INLINE);
     cx.notify();
   },
@@ -631,7 +638,7 @@ export const diffMethods = {
           .on_item_click((key, cx) => this.selectHunkByKey(key, cx))
           .size_full())
         .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0()))
-      .child(this.splitDivider(colors))
+      .child(this.draggableDivider(this.splitDivider(colors)))
       .child(div().id("d-editor").flex_1().min_w(0).h_full()
         .on_key_down((event, cx) => {
           if (event.key === "s" && event.modifiers?.platform) {
@@ -650,7 +657,7 @@ export const diffMethods = {
     if (this.split && this.editor) {
       return this.editableBody(colors, syntax, lang, size, height);
     }
-    const items = this.split ? this.pairs : this.lines;
+    const items = (this.split ? this.pairs : this.lines) ?? this.rows ?? [];
     const listId = `diff-${this.diffKey}-${this.split ? "s" : "i"}`;
     const itemKey = (index) => (items[index]?.kind === HUNK_ROW ? `${HUNK_KEY_PREFIX}${items[index].hunk}` : `r${index}`);
     const drawRange = (range) => items.slice(range.start, range.end).map((row) => this.diffRow(colors, syntax, lang, height, row));
@@ -670,7 +677,8 @@ export const diffMethods = {
             .track_scroll(this.scroller)
             .on_item_click((key, cx) => this.selectHunkByKey(key, cx))
             .size_full())))
-      .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0());
+      .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0())
+      .when(this.split, (el) => el.child(this.draggableDivider(div().absolute().top_0().left(this.splitWidth()).w(SPLIT_DIVIDER_WIDTH).h_full())));
   },
 
   renderDiff() {

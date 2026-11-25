@@ -118,21 +118,11 @@ export function openMarkdownLink(url, where) {
 
 export const lastReveal = () => shared(REVEAL_KEY) ?? null;
 
-// Code runs as row children, link parts ⌘-clickable (VS Code: ⌘-click opens a path in text).
-export function linkedRunChildren(runs, links, { idPrefix, colorOf, linkColor }) {
-  return splitRunsAtLinks(runs, links).map((run, index) => {
-    const cell = div().flex_none().whitespace_nowrap().text_color(colorOf(run)).child(run.text || " ");
-    if (!run.link) {
-      return cell;
-    }
-    const { abs, line } = run.link;
-    return cell.id(`${idPrefix}-${index}`).hover((style) => style.text_color(linkColor).underline())
-      .tooltip(`${abs}${line ? `:${line}` : ""} (⌘-click to open)`)
-      .on_click((event, cx) => {
-        if (event.modifiers?.platform) {
-          cx.stop_propagation();
-          openPath(abs, line);
-        }
-      });
+// Code runs as row children; link parts show in the link colour. A handler inside a virtual list's
+// item renderer throws, so the rows cannot open a path on click.
+export function linkedRunChildren(runs, links, { colorOf, linkColor }) {
+  return splitRunsAtLinks(runs, links).map((run) => {
+    const color = run.link ? linkColor : colorOf(run);
+    return div().flex_none().whitespace_nowrap().text_color(color).child(run.text || " ");
   });
 }
