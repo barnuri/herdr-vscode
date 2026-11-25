@@ -15,17 +15,38 @@ function patternFlag(regex, perl) {
   return perl ? "-P" : "-E";
 }
 
-function includePathspec(glob) {
-  if (glob.startsWith("*")) {
-    return `:(glob)**/${glob}`;
+// One comma-separated pattern as pathspecs: a glob, or a folder or file name (matched at any depth
+// unless it names a path), like VS Code's "files to include" and "files to exclude".
+function patternSpecs(pattern, magic) {
+  const clean = pattern.replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!clean) {
+    return [];
   }
-  return glob.includes("/") ? `:(glob)${glob}` : `:(glob)**/${glob}`;
+  const anchored = clean.startsWith("**/") || clean.startsWith("/") ? clean.replace(/^\//, "") : clean.includes("/") ? clean : `**/${clean}`;
+  return [`:(${magic})${anchored}`, `:(${magic})${anchored}/**`];
+}
+
+export const splitPatterns = (text) => String(text ?? "").split(",").map((part) => part.trim()).filter(Boolean);
+
+// The UTF-16 index of a UTF-8 byte offset into the text (git grep columns count bytes).
+export function byteToIndex(text, byteOffset) {
+  let bytes = 0;
+  let index = 0;
+  while (index < text.length && bytes < byteOffset) {
+    const code = text.codePointAt(index);
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    index += code > 0xffff ? 2 : 1;
+  }
+  return index;
 }
 
 // Regular expressions use -P (Perl-compatible, like JavaScript's) unless perl is false (a git
 // built without PCRE), then -E.
-export function grepArgs(query, { caseSensitive = false, word = false, regex = false, include = "", perl = true } = {}) {
+export function grepArgs(query, { caseSensitive = false, word = false, regex = false, include = "", exclude = "", ignoreFiles = true, perl = true } = {}) {
   const args = [...BASE_GREP_ARGS];
+  if (!ignoreFiles) {
+    args.push("--no-exclude-standard");
+  }
   if (!caseSensitive) {
     args.push("-i");
   }
@@ -33,8 +54,9 @@ export function grepArgs(query, { caseSensitive = false, word = false, regex = f
     args.push("-w");
   }
   args.push(patternFlag(regex, perl), "-e", query, "--");
-  const globs = String(include ?? "").split(",").map((glob) => glob.trim()).filter(Boolean);
-  return [...args, ...globs.map(includePathspec)];
+  const included = splitPatterns(include).flatMap((pattern) => patternSpecs(pattern, "glob"));
+  const excluded = splitPatterns(exclude).flatMap((pattern) => patternSpecs(pattern, "exclude,glob"));
+  return [...args, ...included, ...excluded];
 }
 
 // "path:line:col:text" lines -> [{ rel, matches: [{ line, col, text }] }] in output order.

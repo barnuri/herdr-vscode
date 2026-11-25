@@ -1,12 +1,14 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, v_virtual_list, Scrollbar } from "gpui-base";
-import { theme, nextCommand, checking } from "herdr";
+import { theme, nextCommand, checking, readTextFile, writeTextFile } from "herdr";
 import { workspace, git, ctx, baseName } from "./ws.js";
-import { grepArgs, parseGrep, matchSnippet } from "./search-core.js";
+import { grepArgs, parseGrep, matchSnippet, byteToIndex } from "./search-core.js";
+import { buildPattern, findMatches, replaceAll, replaceOne } from "./find-core.js";
 import { lexCached, sliceRuns, languageOf, syntaxColors } from "./syntax-core.js";
 import { linksIn, watchLinks, linkedRunChildren } from "./links.js";
 import { showInViewer } from "./tabs.js";
-import { TEXT, Icon, FileIcon, RootIcon, tint } from "./ui.js";
+import { TEXT, Icon, IconButton, FileIcon, RootIcon, tint } from "./ui.js";
+import { toast } from "./log.js";
 import { loadIcons } from "./icons.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
 
@@ -49,7 +51,7 @@ export default class HerdrVscodeSearch extends View {
 
   init(_props, cx) {
     loadIcons(this, cx);
-    this.opts = { caseSensitive: false, word: false, regex: false };
+    this.opts = { caseSensitive: false, word: false, regex: false, ignoreFiles: true };
     try {
       // Before settings.json the options lived in localStorage: still the defaults.
       Object.assign(this.opts, JSON.parse(localStorage.getItem(HerdrVscodeSearch.OLD_OPTS_KEY) ?? "{}"));
@@ -63,11 +65,22 @@ export default class HerdrVscodeSearch extends View {
     whenSettings(cx, fromSettings);
     this.collapsed = new Set();
     this.showInclude = false;
+    this.showReplace = false;
+    this.active = null;
+    this.confirmAll = false;
     this.query = InputState.new({ placeholder: "Search" });
+    this.replacement = InputState.new({ placeholder: "Replace" });
     this.include = InputState.new({ placeholder: "files to include, e.g. *.ts, src/" });
+    this.exclude = InputState.new({ placeholder: "files to exclude, e.g. **/*.test.ts, dist" });
     this.query.on("change", (_e, cx) => this.schedule(cx));
     this.query.on("submit", (_e, cx) => this.runSearch(cx));
     this.include.on("change", (_e, cx) => this.schedule(cx));
+    this.exclude.on("change", (_e, cx) => this.schedule(cx));
+    this.replacement.on("change", (_e, cx) => {
+      this.confirmAll = false;
+      cx.notify();
+    });
+    this.replacement.on("submit", (_e, cx) => this.replaceAllAsk(cx));
     this.result = null;
     this.gen = 0;
     if (checking()) {
@@ -147,8 +160,9 @@ export default class HerdrVscodeSearch extends View {
     cx.notify();
     const roots = this.roots();
     const include = this.include.value();
+    const exclude = this.exclude.value();
     cx.spawn(async (cx) => {
-      const groups = await Promise.all(roots.map((root) => this.searchRoot(root, query, include)));
+      const groups = await Promise.all(roots.map((root) => this.searchRoot(root, query, include, exclude)));
       if (gen !== this.gen) {
         return;
       }
@@ -157,12 +171,12 @@ export default class HerdrVscodeSearch extends View {
     });
   }
 
-  async searchRoot(root, query, include) {
+  async searchRoot(root, query, include, exclude) {
     const grep = (args) => git(args, { cwd: root.path, timeout: HerdrVscodeSearch.GREP_TIMEOUT_MS }).catch(() => null);
-    let result = await grep(grepArgs(query, { ...this.opts, include }));
+    let result = await grep(grepArgs(query, { ...this.opts, include, exclude }));
     // A git without PCRE gets the same search with POSIX extended regexes.
     if (result?.code === HerdrVscodeSearch.GIT_USAGE_ERROR && /perl|pcre/i.test(result.stderr ?? "")) {
-      result = await grep(grepArgs(query, { ...this.opts, include, perl: false }));
+      result = await grep(grepArgs(query, { ...this.opts, include, exclude, perl: false }));
     }
     return { root, ...parseGrep(result?.code === 0 ? result.stdout : "", { maxMatches: HerdrVscodeSearch.MAX_MATCHES_PER_REPO }) };
   }
@@ -183,6 +197,8 @@ export default class HerdrVscodeSearch extends View {
     const files = shown.reduce((count, group) => count + group.files.length, 0);
     this.result = { groups: shown, total, files, truncated, q: query, opts: { ...this.opts } };
     this.collapsed.clear();
+    this.active = null;
+    this.confirmAll = false;
     this.rowsCache = this.rows();
     this.resultGen = (this.resultGen ?? 0) + 1;
     this.searching = false;
@@ -239,7 +255,10 @@ export default class HerdrVscodeSearch extends View {
     if (!row) {
       return;
     }
+    this.active = key;
+    this.confirmAll = false;
     if (row.kind === "match") {
+      cx.notify();
       showInViewer("herdr-vscode-files", { root: row.g.root.path, on: null, rel: row.f.rel, line: row.m.line }, baseName(row.f.rel));
       return;
     }
@@ -294,20 +313,172 @@ export default class HerdrVscodeSearch extends View {
       .child(h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap().text_size(TEXT.small)
         .when(snippet.ellipsis, (el) => el.child(part().text_color(t.dim).child("…")))
         .children(colored(snippet.headFrom, snippet.start))
-        .child(part().rounded(2).bg(tint(t.ansi3, HerdrVscodeSearch.HIT_ALPHA)).text_color(t.foreground).child(snippet.hit))
+        .child(part().rounded(2).when(this.showReplace, (el) => el.line_through()).bg(tint(this.showReplace ? t.ansi1 : t.ansi3, HerdrVscodeSearch.HIT_ALPHA)).text_color(t.foreground).child(snippet.hit))
+        .when(this.showReplace, (el) => el.child(part().rounded(2).bg(tint(t.ansi2, HerdrVscodeSearch.HIT_ALPHA)).text_color(t.foreground).child(this.replacement.value())))
         .children(colored(snippet.end, snippet.tailEnd)))
       .child(div().flex_none().pl(6).text_size(TEXT.caption).text_color(t.dim).child(String(match.line)));
   }
 
   drawRow(t, row) {
     const pad = HerdrVscodeSearch.ROW_PAD_PX + (row.indent ?? 0) * HerdrVscodeSearch.INDENT_PX;
-    if (row.kind === "root") {
-      return this.drawRootRow(t, row);
+    const drawn = row.kind === "root" ? this.drawRootRow(t, row) : row.kind === "file" ? this.drawFileRow(t, row, pad) : this.drawMatchRow(t, row, pad);
+    return drawn.when(this.active === row.key, (el) => el.bg(t.selected ?? t.hover));
+  }
+
+  // ---- Replace -------------------------------------------------------------------------------
+
+  replacePattern() {
+    const result = this.result;
+    return result ? buildPattern(result.q, result.opts).pattern : null;
+  }
+
+  async replaceInFile(group, file) {
+    const abs = `${group.root.path}/${file.rel}`;
+    const text = await readTextFile(abs);
+    const pattern = this.replacePattern();
+    if (text === null || text === undefined || !pattern) {
+      return 0;
     }
-    if (row.kind === "file") {
-      return this.drawFileRow(t, row, pad);
+    const done = replaceAll(text, pattern, this.replacement.value(), this.result.opts.regex);
+    if (done.count) {
+      await writeTextFile(abs, done.text, text);
     }
-    return this.drawMatchRow(t, row, pad);
+    return done.count;
+  }
+
+  async replaceInMatch(group, file, match) {
+    const abs = `${group.root.path}/${file.rel}`;
+    const text = await readTextFile(abs);
+    const pattern = this.replacePattern();
+    if (text === null || text === undefined || !pattern) {
+      return 0;
+    }
+    const lines = text.split("\n");
+    const lineText = lines[match.line - 1] ?? "";
+    const column = byteToIndex(lineText, match.col - 1);
+    const hit = findMatches(lineText, pattern).find((candidate) => candidate.start === column);
+    if (!hit) {
+      return 0;
+    }
+    const offset = lines.slice(0, match.line - 1).reduce((sum, line) => sum + line.length + 1, 0);
+    const next = replaceOne(text, pattern, offset + hit.start, offset + hit.end, this.replacement.value(), this.result.opts.regex);
+    await writeTextFile(abs, next, text);
+    return 1;
+  }
+
+  // Runs the replacement, then searches again so the list shows what is left.
+  runReplace(cx, job) {
+    if (this.replacing) {
+      return;
+    }
+    this.replacing = true;
+    this.confirmAll = false;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const done = await job();
+        toast("herdr-vscode-search", { title: `Replaced ${done.count} ${HerdrVscodeSearch.plural(done.count, "occurrence")}${done.files ? ` in ${done.files} ${HerdrVscodeSearch.plural(done.files, "file")}` : ""}`, level: done.count ? "success" : "info", timeout: 2500 });
+      } catch (error) {
+        toast("herdr-vscode-search", { title: "Replace failed", body: String(error?.message ?? error), level: "error", timeout: 6000 });
+      } finally {
+        this.replacing = false;
+      }
+      this.runSearch(cx);
+    });
+  }
+
+  activeRow() {
+    return this.active ? this.rowsCache?.find((row) => row.key === this.active) ?? null : null;
+  }
+
+  replaceActive(cx, wholeFile) {
+    const row = this.activeRow();
+    if (!row || row.kind === "root") {
+      return;
+    }
+    if (row.kind === "match" && !wholeFile) {
+      this.runReplace(cx, async () => ({ count: await this.replaceInMatch(row.g, row.f, row.m), files: 0 }));
+      return;
+    }
+    this.runReplace(cx, async () => ({ count: await this.replaceInFile(row.g, row.f), files: 1 }));
+  }
+
+  // The first click asks, the second replaces everything listed.
+  replaceAllAsk(cx) {
+    const result = this.result;
+    if (!result || !result.total) {
+      return;
+    }
+    if (result.truncated) {
+      toast("herdr-vscode-search", { title: "Too many results", body: "Narrow the search first, so Replace All covers every match.", level: "warning", timeout: 4000 });
+      return;
+    }
+    if (!this.confirmAll) {
+      this.confirmAll = true;
+      cx.notify();
+      return;
+    }
+    this.runReplace(cx, async () => {
+      let count = 0;
+      let files = 0;
+      for (const group of result.groups) {
+        for (const file of group.files) {
+          const done = await this.replaceInFile(group, file);
+          count += done;
+          files += done ? 1 : 0;
+        }
+      }
+      return { count, files };
+    });
+  }
+
+  collapseAll(cx) {
+    const keys = (this.rowsCache ?? []).filter((row) => row.kind !== "match").map((row) => row.key);
+    const everythingCollapsed = keys.length > 0 && keys.every((key) => this.collapsed.has(key));
+    if (everythingCollapsed) {
+      this.collapsed.clear();
+    } else {
+      const files = (this.result?.groups ?? []).flatMap((group) => group.files.map((file) => `f:${group.root.path}:${file.rel}`));
+      files.forEach((key) => this.collapsed.add(key));
+    }
+    this.rowsCache = this.rows();
+    this.resultGen = (this.resultGen ?? 0) + 1;
+    cx.notify();
+  }
+
+  clearAll(cx) {
+    this.query.set_value("");
+    this.replacement.set_value("");
+    this.include.set_value("");
+    this.exclude.set_value("");
+    this.clearResult();
+    this.active = null;
+    this.searching = false;
+    cx.notify();
+  }
+
+  textButton(t, id, label, tip, onClick, primary = false) {
+    return div().id(id).px(7).h(22).flex_none().flex().items_center().rounded(4).cursor_pointer().text_size(TEXT.caption).tooltip(tip)
+      .when(primary, (el) => el.bg(t.solid ?? t.accent).text_color(t.solid_foreground ?? t.accent_foreground))
+      .when(!primary, (el) => el.text_color(t.muted).hover((style) => style.bg(t.hover)))
+      .on_click((_e, cx) => onClick(cx)).child(label);
+  }
+
+  replaceBar(t) {
+    const result = this.result;
+    const row = this.activeRow();
+    const all = this.confirmAll ? `Replace ${result?.total ?? 0} in ${result?.files ?? 0} ${HerdrVscodeSearch.plural(result?.files ?? 0, "file")}?` : "Replace All";
+    return h_flex().gap(4).items_center().flex_wrap()
+      .when(Boolean(row && row.kind === "match"), (el) => el.child(this.textButton(t, "s-rep-match", "Replace", "Replace this match", (cx) => this.replaceActive(cx, false))))
+      .when(Boolean(row && row.kind !== "root"), (el) => el.child(this.textButton(t, "s-rep-file", "Replace in File", "Replace every match in the selected file", (cx) => this.replaceActive(cx, true))))
+      .child(this.textButton(t, "s-rep-all", all, "Replace all matches in every listed file (Enter in the Replace box)", (cx) => this.replaceAllAsk(cx), this.confirmAll));
+  }
+
+  searchTools(t) {
+    return h_flex().gap(0).items_center().flex_none()
+      .child(IconButton({ id: "s-refresh", icon: "refresh", label: "Refresh", size: 20, onClick: (cx) => this.runSearch(cx) }))
+      .child(IconButton({ id: "s-collapse", icon: "collapse", label: "Collapse / Expand All", size: 20, onClick: (cx) => this.collapseAll(cx) }))
+      .child(IconButton({ id: "s-clear", icon: "trash", label: "Clear Search Results", size: 20, onClick: (cx) => this.clearAll(cx) }));
   }
 
   note() {
@@ -328,25 +499,48 @@ export default class HerdrVscodeSearch extends View {
       .on_click((_e, cx) => this.toggle(key, cx)).child(label);
   }
 
+  field(t, state, height = 24) {
+    return h_flex().flex_1().min_w(0).h(height).pl(6).pr(3).gap(2).items_center().rounded(5).border_1().border_color(t.border).bg(t.background)
+      .child(Input.new(state).flex_1().h(height - 2).text_size(TEXT.small));
+  }
+
   searchBox(t) {
     const note = this.note();
+    const caption = (text) => div().text_size(TEXT.caption).text_color(t.dim).child(text);
     return v_flex().flex_none().px(8).pt(4).pb(6).gap(4)
-      .child(h_flex().gap(4).items_center()
-        .child(h_flex().flex_1().min_w(0).h(26).pl(6).pr(3).gap(2).items_center().rounded(5).border_1().border_color(t.border).bg(t.background)
-          .child(Input.new(this.query).flex_1().h(24).text_size(TEXT.small))
-          .child(this.optionToggle(t, "caseSensitive", "Aa", "Match Case"))
-          .child(this.optionToggle(t, "word", "ab", "Match Whole Word"))
-          .child(this.optionToggle(t, "regex", ".*", "Use Regular Expression")))
-        .child(div().id("s-more").size(22).flex_none().flex().items_center().justify_center().rounded(4).cursor_pointer()
-          .text_color(this.showInclude ? t.foreground : t.dim).hover((style) => style.bg(t.hover)).tooltip("Toggle Search Details")
-          .on_click((_e, cx) => {
-            this.showInclude = !this.showInclude;
+      .child(h_flex().gap(4).items_start()
+        .child(div().id("s-replace-mode").w(16).h(26).flex_none().flex().items_center().justify_center().rounded(4).cursor_pointer().hover((style) => style.bg(t.hover))
+          .tooltip("Toggle Replace").on_click((_e, cx) => {
+            this.showReplace = !this.showReplace;
+            this.confirmAll = false;
             cx.notify();
-          })
-          .child(Icon("more", 14))))
-      .when(this.showInclude, (el) => el.child(h_flex().h(24).pl(6).pr(3).items_center().rounded(5).border_1().border_color(t.border).bg(t.background)
-        .child(Input.new(this.include).flex_1().h(22).text_size(TEXT.caption))))
-      .when(Boolean(note), (el) => el.child(div().pt(2).text_size(TEXT.caption).text_color(this.badRegex ? t.ansi1 : t.dim).child(note)));
+          }).child(Icon(this.showReplace ? "chevron-down" : "chevron-right", 13).text_color(t.muted)))
+        .child(v_flex().flex_1().min_w(0).gap(4)
+          .child(h_flex().gap(4).items_center()
+            .child(h_flex().flex_1().min_w(0).h(26).pl(6).pr(3).gap(2).items_center().rounded(5).border_1().border_color(this.badRegex ? t.ansi1 : t.border).bg(t.background)
+              .child(Input.new(this.query).flex_1().h(24).text_size(TEXT.small))
+              .child(this.optionToggle(t, "caseSensitive", "Aa", "Match Case"))
+              .child(this.optionToggle(t, "word", "ab", "Match Whole Word"))
+              .child(this.optionToggle(t, "regex", ".*", "Use Regular Expression")))
+            .child(div().id("s-more").size(22).flex_none().flex().items_center().justify_center().rounded(4).cursor_pointer()
+              .text_color(this.showInclude ? t.foreground : t.dim).hover((style) => style.bg(t.hover)).tooltip("Toggle Search Details (files to include and exclude)")
+              .on_click((_e, cx) => {
+                this.showInclude = !this.showInclude;
+                cx.notify();
+              })
+              .child(Icon("more", 14))))
+          .when(this.showReplace, (el) => el.child(this.field(t, this.replacement, 26)))
+          .when(this.showInclude, (el) => el
+            .child(caption("files to include"))
+            .child(this.field(t, this.include, 24))
+            .child(caption("files to exclude"))
+            .child(h_flex().gap(4).items_center()
+              .child(this.field(t, this.exclude, 24))
+              .child(this.optionToggle(t, "ignoreFiles", "ig", "Use Exclude Settings and Ignore Files (.gitignore)"))))
+          .when(this.showReplace && Boolean(this.result?.total), (el) => el.child(this.replaceBar(t)))))
+      .child(h_flex().gap(4).items_center()
+        .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(this.badRegex ? t.ansi1 : t.dim).child(note))
+        .when(Boolean(this.result), (el) => el.child(this.searchTools(t))));
   }
 
   render() {

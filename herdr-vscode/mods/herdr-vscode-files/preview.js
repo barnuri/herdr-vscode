@@ -89,6 +89,7 @@ export const previewMethods = {
   initPreview(initProps, cx) {
     this.viewSpace = initProps.space;
     this.scroller = VirtualListScrollHandle.new();
+    this.initFind(cx);
     if (initProps.untitled?.name) {
       this.initUntitled(initProps.untitled, cx);
       return;
@@ -606,6 +607,7 @@ export const previewMethods = {
         this.keepTab();
       }
       this.setDirty(dirty);
+      this.findRefresh(cx);
       cx.notify();
     });
     this.editor.on("blur", (_event, cx) => this.autoSaveTick(cx, true));
@@ -704,6 +706,7 @@ export const previewMethods = {
     const lineLabel = this.selLine ? `History of line ${this.selLine}` : "Click a line, then show its history";
     return el
       .when(Boolean(this.selLine), (row) => row.child(div().text_size(TEXT.caption).text_color(t.dim).child(`line ${this.selLine}`)))
+      .child(IconButton({ id: "pv-find", icon: "search", label: "Find (⌘F)", active: Boolean(this.findOpen), onClick: (cx) => this.openFind(cx), size: 22 }))
       .child(IconButton({ id: "pv-blame", icon: "blame", label: this.blameOn ? "Hide blame" : "Blame (author · age per line, heatmap)", active: Boolean(this.blameOn), onClick: (cx) => this.toggleBlame(cx), size: 22 }))
       .child(IconButton({ id: "pv-hist", icon: "history", label: "File history", active: this.history?.kind === HISTORY_FILE, onClick: (cx) => this.toggleFileHistory(cx), size: 22 }))
       .child(IconButton({ id: "pv-lhist", icon: "line-history", label: lineLabel, disabled: !this.selLine, active: this.history?.kind === HISTORY_LINE, onClick: (cx) => this.openHistory(HISTORY_LINE, cx), size: 22 }));
@@ -763,15 +766,21 @@ export const previewMethods = {
           .on_link_click((url) => openMarkdownLink(url, this.linkBase() ?? {})));
     }
     if (this.editor && !this.blameOn) {
-      return div().id("pv-editor").flex_1().min_h(0).font_family(codeFont())
+      const editor = div().id("pv-editor").flex_1().min_h(0).font_family(codeFont())
         .on_mouse_down("right", (event) => this.openFileMenu(event.position))
         .on_key_down((event, cx) => {
           if (event.key === "s" && event.modifiers?.platform) {
             cx.stop_propagation();
             this.save(cx);
+            return;
           }
+          this.findKey(event, cx);
         })
         .child(Editor.new(this.editor).size_full());
+      if (!this.findOpen) {
+        return editor;
+      }
+      return v_flex().flex_1().min_h(0).child(this.findBar(t)).child(editor);
     }
     return null;
   },

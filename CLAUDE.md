@@ -48,6 +48,8 @@ Every user-facing setting, preference or toggle is stored with `shared/settings.
 | `search.caseSensitive` | `false` | Search: match case |
 | `search.word` | `false` | Search: whole word |
 | `search.regex` | `false` | Search: regular expression |
+| `search.ignoreFiles` | `true` | Search: skip files git ignores (`.gitignore`) |
+| `find.caseSensitive`, `find.word`, `find.regex` | `false` | File find bar (⌘F): match case, whole word, regular expression |
 | `graph.allBranches` | `true` | Git History: all branches (`false`: current branch) |
 | `ci.filter` | `"all"` | CI / CD: run filter |
 | `ci.mine` | `true` | CI / CD: only my runs |

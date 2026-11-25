@@ -50,6 +50,8 @@ const VX_COMMANDS = [
   ["herdr-vscode-tabs.list", "View: Show All Tabs"],
   ["herdr-vscode-files.edit", "File: Edit / Stop Editing"],
   ["herdr-vscode-files.save", "File: Save"],
+  ["herdr-vscode-files.find", "File: Find"],
+  ["herdr-vscode-files.replace", "File: Replace"],
   ["herdr-vscode-titlebar.symbols", "Go to Symbol in Editor…"],
   ["herdr-vscode-titlebar.line", "Go to Line…"],
   ["herdr-vscode-titlebar.back", "Go Back"],

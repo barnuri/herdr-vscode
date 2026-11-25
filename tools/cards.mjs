@@ -28,6 +28,8 @@ export const LAYOUT_CARDS = {
         "cmd-e": "herdr-vscode-tabs.switch",
         "cmd-\\": "pane.split:right",
         "cmd-s": "herdr-vscode-files.save",
+        "cmd-f": "herdr-vscode-files.find",
+        "cmd-alt-f": "herdr-vscode-files.replace",
         "cmd-w": "herdr-vscode-tabs.close",
       },
     },

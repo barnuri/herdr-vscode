@@ -5,6 +5,7 @@ import { treeMethods } from "./tree.js";
 import { previewMethods } from "./preview.js";
 import { timelineMethods } from "./timeline.js";
 import { loadIcons } from "./icons.js";
+import { findMethods } from "./find.js";
 import { untitledMethods } from "./untitled.js";
 import { fileMenuMethods } from "./file-menu.js";
 import SaveAsDialog from "./save-as-dialog.js";
@@ -71,6 +72,9 @@ class HerdrVscodeFiles extends View {
     if (command === "edit") {
       this.toggleEdit(cx);
     }
+    if (this.mode === HerdrVscodeFiles.MODE_VIEW && (command === "find" || command === "replace")) {
+      this.openFind(cx, { replace: command === "replace" });
+    }
   }
 
   initTreeMode(cx) {
@@ -103,5 +107,5 @@ class HerdrVscodeFiles extends View {
   }
 }
 
-Object.assign(HerdrVscodeFiles.prototype, treeMethods, previewMethods, timelineMethods, untitledMethods, fileMenuMethods);
+Object.assign(HerdrVscodeFiles.prototype, treeMethods, previewMethods, findMethods, timelineMethods, untitledMethods, fileMenuMethods);
 export default HerdrVscodeFiles;

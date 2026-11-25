@@ -67,7 +67,7 @@ test("nav: visit drops forward history; step skips closed tabs", () => {
 
 test("grepArgs and parseGrep", () => {
   assert.deepEqual(grepArgs("foo", { word: true, include: "*.ts, src/lib" }),
-    ["grep", "-n", "-I", "--column", "--no-color", "--untracked", "--full-name", "-i", "-w", "-F", "-e", "foo", "--", ":(glob)**/*.ts", ":(glob)src/lib"]);
+    ["grep", "-n", "-I", "--column", "--no-color", "--untracked", "--full-name", "-i", "-w", "-F", "-e", "foo", "--", ":(glob)**/*.ts", ":(glob)**/*.ts/**", ":(glob)src/lib", ":(glob)src/lib/**"]);
   assert.ok(grepArgs("a.b", { regex: true, caseSensitive: true }).includes("-P"));
   assert.ok(grepArgs("a.b", { regex: true, perl: false }).includes("-E"));
   const grep = parseGrep("src/a.ts:3:7:const foo = 1\nsrc/a.ts:9:1:foo()\nREADME.md:1:3:# foo\n");
