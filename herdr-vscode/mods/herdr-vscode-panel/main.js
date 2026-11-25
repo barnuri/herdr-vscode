@@ -28,7 +28,7 @@ export default class HerdrVscodePanel extends View {
   static SHOW_KEY = "herdr-vscode.panel.show";
   static VIEWER_MODS = ["herdr-vscode-files", "herdr-vscode-changes"];
   static SIZE = 260;
-  static MAXIMIZED_SIZE = 2000;
+  static MAXIMIZED_WEIGHT = 20;
   static PORTS_POLL_MS = 3000;
   static PROBLEMS_REDRAW_MS = 1500;
   static TIDY_MS = 1000;
@@ -138,7 +138,7 @@ export default class HerdrVscodePanel extends View {
   }
 
   static isMaximized(bottom) {
-    return (bottom?.size?.px ?? 0) >= HerdrVscodePanel.MAXIMIZED_SIZE;
+    return (bottom?.size?.weight ?? 0) >= HerdrVscodePanel.MAXIMIZED_WEIGHT;
   }
 
   static plural(count, word) {
@@ -582,7 +582,7 @@ export default class HerdrVscodePanel extends View {
       this.restoreSize();
       return;
     }
-    run("layout.resize", { id: "bottom", px: HerdrVscodePanel.MAXIMIZED_SIZE });
+    run("layout.resize", { id: "bottom", weight: HerdrVscodePanel.MAXIMIZED_WEIGHT });
   }
 
   runChecks(cx) {

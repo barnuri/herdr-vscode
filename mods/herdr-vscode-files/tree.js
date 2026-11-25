@@ -35,7 +35,7 @@ const ERROR_LEVEL = "error";
 // Null-separated "d|f", name pairs; the folder is $1, never part of the script text.
 const LIST = `cd -- "$1" || exit 2; n=0; for p in * .[!.]* ..?*; do [ -e "$p" ] || [ -L "$p" ] || continue; [ "$p" = .git ] && continue; if [ -d "$p" ]; then printf 'd\\0%s\\0' "$p"; else printf 'f\\0%s\\0' "$p"; fi; n=$((n+1)); [ $n -ge ${PER_FOLDER} ] && break; done; exit 0`;
 // Without git: every file below, skipping the usual heavy folders.
-const FIND = `cd -- "$1" && find . -maxdepth 8 \\( -name .git -o -name node_modules -o -name .next -o -name dist -o -name build -o -name target -o -name .venv \\) -prune -o -type f -print 2>/dev/null | head -n 40000`;
+const FIND = `cd -- "$1" && if command -v rg >/dev/null 2>&1; then rg --files --hidden -g '!.git' --max-depth 8 2>/dev/null | sed 's|^|./|' | head -n 40000; exit 0; fi; find . -maxdepth 8 \\( -name .git -o -name node_modules -o -name .next -o -name dist -o -name build -o -name target -o -name .venv \\) -prune -o -type f -print 2>/dev/null | head -n 40000`;
 
 // a1 < a2 < a10, case-insensitively.
 function natural(left, right) {

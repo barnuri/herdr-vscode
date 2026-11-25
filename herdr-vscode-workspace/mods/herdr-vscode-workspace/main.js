@@ -32,6 +32,19 @@ class HerdrVscodeWorkspace extends View {
   static NARROW_WIDTH = 160;
   static RESIZE_THRESHOLD = 4;
   static TRANSPARENT = "#00000000";
+  // True when git ignores every changed path (build output, caches): no rescan for those.
+  static async allIgnored(root, paths) {
+    const sample = paths.slice(0, 200);
+    if (!sample.length || paths.length > sample.length) {
+      return false;
+    }
+    const result = await git(["check-ignore", ...sample], { cwd: root }).catch(() => null);
+    if (!result || (result.code !== 0 && result.code !== 1)) {
+      return false;
+    }
+    return result.stdout.split("\n").filter(Boolean).length === sample.length;
+  }
+
   static NOISY_PATH = /\/(\.git|node_modules|\.next|dist)(\/|$)/;
   static NOT_A_REPO = /not a git repository/i;
   static KEY_RECENT = "recent";
@@ -574,6 +587,9 @@ class HerdrVscodeWorkspace extends View {
           return;
         }
         if (paths.length && paths.every((path) => HerdrVscodeWorkspace.NOISY_PATH.test(path))) {
+          continue;
+        }
+        if (await HerdrVscodeWorkspace.allIgnored(root, paths)) {
           continue;
         }
         if (this.watching !== root) {

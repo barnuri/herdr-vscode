@@ -69,6 +69,23 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const nameStatus = (out) => String(out ?? "").split("\n").filter(Boolean)
   .map((line) => line.split("\t")).filter((parts) => parts.length >= 2).map(([status, ...rest]) => ({ status: status[0], path: rest.at(-1) }));
 
+function commitTree(files) {
+  const root = { dirs: new Map(), files: [] };
+  for (const file of files) {
+    const parts = file.path.split("/");
+    parts.pop();
+    let node = root;
+    for (const part of parts) {
+      if (!node.dirs.has(part)) {
+        node.dirs.set(part, { dirs: new Map(), files: [] });
+      }
+      node = node.dirs.get(part);
+    }
+    node.files.push(file);
+  }
+  return root;
+}
+
 const withoutRemote = (name) => name.slice(name.indexOf("/") + 1);
 
 // HEAD's branch first, then local branches, tags, remotes. A remote branch named like a local
@@ -500,7 +517,7 @@ export const sectionMethods = {
       .when(Boolean(ref.synced), (el) => el.child(Icon("cloud", 9)));
   },
 
-  fileLine(colors, file, depth, open) {
+  fileLine(colors, file, depth, open, tree = false) {
     const letter = file.status === "A" || file.status === "D" ? file.status : "M";
     const color = markColor(letter, colors);
     const slash = file.path.lastIndexOf("/");
@@ -510,7 +527,7 @@ export const sectionMethods = {
       .on_click(() => showInViewer(MOD, { root: this.root, on: this.on ?? null, path: file.path, ...open }, name))
       .child(FileIcon(this.icons, file.path, { size: 14 }))
       .child(div().flex_shrink(1).min_w(40).max_w(190).truncate().text_color(color).when(letter === "D", (el) => el.line_through()).child(name))
-      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(slash > 0 ? file.path.slice(0, slash) : ""))
+      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.caption).text_color(colors.dim).child(slash > 0 && !tree ? file.path.slice(0, slash) : ""))
       .child(div().w(16).h(16).flex_none().flex().items_center().justify_center().rounded(4).bg(tint(color, "22")).text_size(TEXT.tiny).font_semibold().text_color(color).child(file.status));
   },
 
@@ -558,7 +575,38 @@ export const sectionMethods = {
       return [note("No file changes.")];
     }
     const open = kind === STASH_KIND ? { scope: STASH_KIND, ref: commit.ref, subject: commit.subject } : { scope: COMMIT_KIND, sha: commit.hash, subject: commit.subject };
-    return files.map((file) => this.fileLine(colors, file, depth + 2, open));
+    if (this.view !== "tree") {
+      return files.map((file) => this.fileLine(colors, file, depth + 2, open));
+    }
+    const out = [];
+    this.walkCommitTree(colors, commitTree(files), depth + 2, "", `${open.sha ?? open.ref}`, open, out);
+    return out;
+  },
+
+  walkCommitTree(colors, node, depth, prefix, scopeId, open, out) {
+    for (const [name, child] of [...node.dirs].sort(([a], [b]) => a.localeCompare(b))) {
+      let label = name;
+      let current = child;
+      while (current.files.length === 0 && current.dirs.size === 1) {
+        const [[childName, next]] = [...current.dirs];
+        label += `/${childName}`;
+        current = next;
+      }
+      const id = `cdir:${scopeId}:${prefix}${label}`;
+      const isOpen = !this.closed.has(id);
+      out.push(h_flex().id(id).h(ROW_HEIGHT).flex_none().mx(4).pl(10 + depth * INDENT).pr(6).gap(6).items_center().rounded(5)
+        .cursor_pointer().hover((style) => style.bg(colors.hover)).text_size(TEXT.small).text_color(colors.foreground)
+        .on_click((_e, cx) => this.toggleGroup(id, cx))
+        .child(Icon(isOpen ? "chevron-down" : "chevron-right", 14).text_color(colors.dim))
+        .child(FileIcon(this.icons, label.split("/").pop(), { dir: true, open: isOpen, size: 14 }))
+        .child(div().flex_1().min_w(0).truncate().child(label)));
+      if (isOpen) {
+        this.walkCommitTree(colors, current, depth + 1, `${prefix}${label}/`, scopeId, open, out);
+      }
+    }
+    for (const file of [...node.files].sort((a, b) => a.path.localeCompare(b.path))) {
+      out.push(this.fileLine(colors, file, depth, open, true));
+    }
   },
 
   // A commit or stash row; `graph` = { row, width, outgoing } in the Commits section.
