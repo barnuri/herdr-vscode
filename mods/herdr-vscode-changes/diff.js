@@ -46,6 +46,11 @@ const SPLIT_MIN = 0.15;
 const SPLIT_MAX = 0.85;
 const SPLIT_DEFAULT = 0.5;
 const SPLIT_DIVIDER_WIDTH = 6;
+const SPLIT_HANDLE_HOVER = "55";
+const RULER_WIDTH = 8;
+const RULER_RIGHT = 12;
+const RULER_MIN_MARK = 3;
+const RULER_ALPHA = "cc";
 function diffArgs(target, context = null) {
   const args = baseDiffArgs(target);
   if (!context) {
@@ -99,6 +104,39 @@ function kindColor(colors, kind) {
     return colors.ansi2;
   }
   return kind === REMOVED ? colors.ansi1 : colors.dim;
+}
+
+function changeKind(row) {
+  if (row.kind === ADDED) {
+    return "added";
+  }
+  if (row.kind === REMOVED) {
+    return "removed";
+  }
+  if (row.kind !== "pair") {
+    return null;
+  }
+  const removed = row.left?.kind === REMOVED;
+  const added = row.right?.kind === ADDED;
+  if (removed && added) {
+    return "modified";
+  }
+  return added ? "added" : removed ? "removed" : null;
+}
+
+// Runs of changed rows as { kind, start, end } over the row indexes.
+function changeRuns(items) {
+  const runs = [];
+  items.forEach((row, index) => {
+    const kind = changeKind(row);
+    const last = runs[runs.length - 1];
+    if (kind && last?.kind === kind && last.end === index) {
+      last.end = index + 1;
+    } else if (kind) {
+      runs.push({ kind, start: index, end: index + 1 });
+    }
+  });
+  return runs;
 }
 
 const lineNumber = (value) => (value !== undefined ? String(value) : "");
@@ -606,6 +644,34 @@ export const diffMethods = {
     return h_flex().h(height).w_full().child(this.cell(colors, syntax, row, lang, "inline"));
   },
 
+  rulerColor(colors, kind) {
+    if (kind === "added") {
+      return colors.ansi2;
+    }
+    return kind === "removed" ? colors.ansi1 : colors.accent;
+  },
+
+  // Where the changes are, over the whole file (like VS Code's overview ruler); a click jumps there.
+  changeRuler(colors, items) {
+    const count = items.length;
+    if (!count) {
+      return div();
+    }
+    const runs = changeRuns(items);
+    return div().id("d-ruler").absolute().top_0().right(RULER_RIGHT).w(RULER_WIDTH).h_full()
+      .on_mouse_down("left", (event, cx) => {
+        const height = event.bounds?.height;
+        if (!height || !event.local_position) {
+          return;
+        }
+        this.scroller.scroll_to_item(Math.min(count - 1, Math.floor((event.local_position.y / height) * count)), "center");
+        cx.stop_propagation();
+        cx.notify();
+      })
+      .children(runs.map((run) => div().absolute().left_0().w_full().top(`${(run.start / count) * 100}%`).h(`${((run.end - run.start) / count) * 100}%`)
+        .min_h(RULER_MIN_MARK).bg(tint(this.rulerColor(colors, run.kind), RULER_ALPHA))));
+  },
+
   selectHunkByKey(key, cx) {
     if (!key.startsWith(HUNK_KEY_PREFIX) || !this.hunks) {
       return;
@@ -678,7 +744,9 @@ export const diffMethods = {
             .on_item_click((key, cx) => this.selectHunkByKey(key, cx))
             .size_full())))
       .child(Scrollbar.vertical(listId).viewport_from_layout().absolute().inset_0())
-      .when(this.split, (el) => el.child(this.draggableDivider(div().absolute().top_0().left(this.splitWidth()).w(SPLIT_DIVIDER_WIDTH).h_full())));
+      .child(this.changeRuler(colors, items))
+      .when(this.split, (el) => el.child(this.draggableDivider(div().absolute().top_0().left(this.splitWidth()).w(SPLIT_DIVIDER_WIDTH).h_full())
+        .hover((handle) => handle.bg(tint(colors.accent, SPLIT_HANDLE_HOVER)))));
   },
 
   renderDiff() {
