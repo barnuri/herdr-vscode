@@ -1,6 +1,7 @@
 import { View } from "gpui-kit";
 import { TextareaState, InputState } from "gpui-base";
-import { props, checking, nextCommand } from "herdr";
+import { props, checking, nextCommand, window } from "herdr";
+import { PollPacer } from "./poll-core.js";
 import { panelMethods } from "./panel.js";
 import { diffMethods } from "./diff.js";
 import { sectionMethods } from "./sections.js";
@@ -13,6 +14,8 @@ import { ConfirmView } from "./ui.js";
 class HerdrVscodeChanges extends View {
   static FOLLOW_MS = 400;
   static REFRESH_MS = 10000;
+  // An unchanged repo backs off to this; a slow git call stretches it further.
+  static REFRESH_MAX_MS = 60000;
   static COMMAND_MS = 50;
   static VIEW_MODE = "view";
   static MESSAGE_ROWS = 1;
@@ -79,6 +82,17 @@ class HerdrVscodeChanges extends View {
     this.message.on("change", (_e, cx) => cx.notify());
   }
 
+  // One timer chain: the next read waits for the last one and backs off while the repo is
+  // unchanged or git is slow. A hidden window reads nothing.
+  scheduleRefresh(cx) {
+    cx.timer.after(this.pollPacer.nextMs(), (cx) => {
+      if (window()?.visible !== false) {
+        this.refresh(cx, true);
+      }
+      this.scheduleRefresh(cx);
+    });
+  }
+
   initPanelView(cx) {
     this.message = HerdrVscodeChanges.messageState(null);
     this.search = InputState.new({ placeholder: "Search commits" });
@@ -89,7 +103,8 @@ class HerdrVscodeChanges extends View {
     }
     cx.timer.every(HerdrVscodeChanges.FOLLOW_MS, (cx) => this.followPanel(cx));
     cx.timer.every(HerdrVscodeChanges.COMMAND_MS, (cx) => this.takeScmCommand(cx));
-    cx.timer.every(HerdrVscodeChanges.REFRESH_MS, (cx) => this.refresh(cx));
+    this.pollPacer = new PollPacer({ baseMs: HerdrVscodeChanges.REFRESH_MS, maxMs: HerdrVscodeChanges.REFRESH_MAX_MS });
+    this.scheduleRefresh(cx);
     // Key bindings and `herdr-app do herdr-vscode-changes.viewAsTree` (or .viewAsList).
     cx.spawn(async (cx) => {
       for (;;) {

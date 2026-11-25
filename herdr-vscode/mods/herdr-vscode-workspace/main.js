@@ -1,6 +1,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState } from "gpui-base";
-import { theme, shared, setShared, run, panes, spaces, exec, watchFolder, props, pickFolder, checking } from "herdr";
+import { theme, shared, setShared, run, panes, spaces, exec, watchFolder, props, pickFolder, checking, window } from "herdr";
+import { PollPacer, stalest } from "./poll-core.js";
 import {
   ctx, workspace, active, setActive, changedAt, git, findWorkspaceFile, folderRoots, loadWorkspace, rootFor,
   baseName, editWorkspaceFile, writeText, repoTop,
@@ -22,6 +23,10 @@ import { menuMethods, post } from "./menus.js";
 class HerdrVscodeWorkspace extends View {
   static MOD = "herdr-vscode-workspace";
   static STATUS_MS = 10000;
+  static STATUS_MAX_MS = 60000;
+  // Repos read per timer pass, so a workspace of many repos cannot start many git processes at once.
+  static STATUS_REPOS_PER_PASS = 4;
+  static STATUS_MIN_AGE_MS = 5000;
   static RECHECK_FILE_MS = 15000;
   static FOLLOW_MS = 400;
   static REPLY_POLL_MS = 250;
@@ -167,10 +172,8 @@ class HerdrVscodeWorkspace extends View {
     this.cmdSeen = shared(HerdrVscodeWorkspace.SHARED_COMMAND)?.id ?? null;
     cx.spawn(async (cx) => this.restoreWorkspace(cx));
     cx.timer.every(HerdrVscodeWorkspace.FOLLOW_MS, (cx) => this.follow(cx));
-    cx.timer.every(HerdrVscodeWorkspace.STATUS_MS, (cx) => {
-      this.refreshAll(cx);
-      this.reloadOpen(cx);
-    });
+    this.statusPacer = new PollPacer({ baseMs: HerdrVscodeWorkspace.STATUS_MS, maxMs: HerdrVscodeWorkspace.STATUS_MAX_MS });
+    this.scheduleStatus(cx);
     cx.timer.every(HerdrVscodeWorkspace.RECHECK_FILE_MS, (cx) => {
       if (this.ws?.file) {
         this.openFile(this.ws.file, cx, { quiet: true });
@@ -602,8 +605,36 @@ class HerdrVscodeWorkspace extends View {
     });
   }
 
+  // One timer chain: the next pass backs off while no repo changed. A hidden window reads nothing.
+  scheduleStatus(cx) {
+    cx.timer.after(this.statusPacer.nextMs(), (cx) => {
+      if (window()?.visible !== false) {
+        this.statusPacer.note({ changed: Boolean(this.statusChanged), tookMs: 0 });
+        this.statusChanged = false;
+        this.refreshStale(cx);
+        this.reloadOpen(cx);
+      }
+      this.scheduleStatus(cx);
+    });
+  }
+
+  // The timer's pass: the stalest few repos only.
+  refreshStale(cx) {
+    this.statusFetchedAt ??= new Map();
+    const paths = (this.ws?.roots ?? []).map((root) => root.path);
+    const due = stalest(paths, this.statusFetchedAt, Date.now(), HerdrVscodeWorkspace.STATUS_REPOS_PER_PASS, HerdrVscodeWorkspace.STATUS_MIN_AGE_MS);
+    for (const path of due) {
+      this.statusFetchedAt.set(path, Date.now());
+      this.refreshOne(path, cx);
+    }
+  }
+
+  // Every repo now (a click, a workspace change): also resets the timer to its base rate.
   refreshAll(cx) {
+    this.statusPacer?.reset();
+    this.statusFetchedAt ??= new Map();
     for (const root of this.ws?.roots ?? []) {
+      this.statusFetchedAt.set(root.path, Date.now());
       this.refreshOne(root.path, cx);
     }
   }
@@ -635,6 +666,7 @@ class HerdrVscodeWorkspace extends View {
         return;
       }
       this.status.set(path, next);
+      this.statusChanged = true;
       this.publishSummary();
       cx.notify();
     });

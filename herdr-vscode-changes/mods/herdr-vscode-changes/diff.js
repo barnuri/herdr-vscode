@@ -1,6 +1,6 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, Scrollbar, VirtualListScrollHandle, EditorState, Editor } from "gpui-base";
-import { theme, readTextFile, writeTextFile, exec } from "herdr";
+import { theme, readTextFile, writeTextFile, exec, window } from "herdr";
 import { git, bump } from "./ws.js";
 import { splitHunks, hunkPatch } from "./scm-core.js";
 import { READ, diffRows, splitRows, lineStartOffset } from "./git-core.js";
@@ -191,7 +191,11 @@ export const diffMethods = {
     this.scroller = VirtualListScrollHandle.new();
     // The target is cheap to check: follow a click at once, reload git every POLL_MS.
     cx.timer.every(FOLLOW_MS, (cx) => this.syncDiff(cx));
-    cx.timer.every(POLL_MS, (cx) => this.syncDiff(cx, true));
+    cx.timer.every(POLL_MS, (cx) => {
+      if (window()?.visible !== false) {
+        this.syncDiff(cx, true);
+      }
+    });
     cx.timer.every(AUTOSAVE_TICK_MS, (cx) => this.autoSaveWorking(cx));
     watchLinks(cx);
     this.syncDiff(cx);

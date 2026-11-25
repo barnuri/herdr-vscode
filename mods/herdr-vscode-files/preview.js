@@ -1,7 +1,7 @@
 import { div, image } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, Scrollbar, TextView, VirtualListScrollHandle, EditorState, Editor } from "gpui-base";
-import { theme, readTextFile, writeTextFile, exec, appHome, shared, setShared } from "herdr";
-import { git, bump } from "./ws.js";
+import { theme, readTextFile, writeTextFile, exec, appHome, shared, setShared, window } from "herdr";
+import { git, bump, changedAt } from "./ws.js";
 import { parseBlame, heat, shortAge, NOT_COMMITTED } from "./blame-core.js";
 import { parseLog, LOG_FORMAT, parseHunks } from "./git-core.js";
 import { LexCache, languageOf, syntaxColors, editorSyntax, editorLanguageOf } from "./syntax-core.js";
@@ -15,6 +15,9 @@ import { linksIn, watchLinks, openMarkdownLink, linkedRunChildren, REVEAL_KEY } 
 const MOD = "herdr-vscode-files";
 const BLAME_W = 230;
 const POLL_MS = 2000;
+// The changed-lines gutter reads git (status + diff). Re-read it only when the file text or a repo
+// change was seen, or after this long, so an open file costs no git process per poll.
+const HUNKS_MAX_AGE_MS = 30000;
 const FOLLOW_MS = 100;
 const AUTOSAVE_TICK_MS = 250;
 const MAX_LINES = 20000;
@@ -42,8 +45,11 @@ const OLD_BLAME_KEY = "blame";
 const HISTORY_FILE = "file";
 const HISTORY_LINE = "line";
 const UNTRACKED_HUNK = { newStart: 1, fresh: Infinity, kind: "added" };
-const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|ico)$/i;
+const IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|svg|ico)$/i;
+const VIDEO = /\.(mp4|m4v|mov|webm|ogv)$/i;
+const HTML = /\.(html?|xhtml)$/i;
 const MARKDOWN = /\.(md|markdown|mdx)$/i;
+const EXTERNAL_PREVIEW = (rel) => VIDEO.test(rel) || HTML.test(rel);
 const NO_BLAME = /no such path|not in the working tree|fatal: no such ref/i;
 const STALE_WRITE = /stale|changed|expected/i;
 // $1 source, $2 copy: copy only when different, so an unchanged image never reloads.
@@ -122,7 +128,11 @@ export const previewMethods = {
     }
     // The previewed file is cheap to check: follow a click at once, re-read the file every POLL_MS.
     cx.timer.every(FOLLOW_MS, (cx) => this.syncPreview(cx));
-    cx.timer.every(POLL_MS, (cx) => this.syncPreview(cx, true));
+    cx.timer.every(POLL_MS, (cx) => {
+      if (window()?.visible !== false) {
+        this.syncPreview(cx, true);
+      }
+    });
     cx.timer.every(AUTOSAVE_TICK_MS, (cx) => {
       this.autoSaveTick(cx);
       this.takeFileMenuCommand(cx);
@@ -172,6 +182,7 @@ export const previewMethods = {
     this.editChecked = false;
     this.fileKey = key;
     this.file = value;
+    this.imageCopy = null;
     this.text = undefined;
     this.problem = null;
     this.lines = null;
@@ -224,8 +235,15 @@ export const previewMethods = {
           await this.readImage(file);
           return;
         }
+        if (EXTERNAL_PREVIEW(file.rel)) {
+          this.problem = null;
+          return;
+        }
         if (await this.readText(file, cx)) {
-          await this.loadHunks(file);
+          if (this.hunksStale(file)) {
+            await this.loadHunks(file);
+            this.hunksSeen = { key: `${file.on ?? ""}|${file.root}/${file.rel}`, text: this.text, change: changedAt(), at: Date.now() };
+          }
           await this.applyEditWanted(cx);
         }
       } finally {
@@ -340,6 +358,16 @@ export const previewMethods = {
       this.openHistory(this.wantHistory, cx);
       this.wantHistory = null;
     }
+  },
+
+  // True when the changed-lines gutter must be read again: another file, other text, a repo change, or too old.
+  hunksStale(file) {
+    const seen = this.hunksSeen;
+    return !seen
+      || seen.key !== `${file.on ?? ""}|${file.root}/${file.rel}`
+      || seen.text !== this.text
+      || seen.change !== changedAt()
+      || Date.now() - seen.at > HUNKS_MAX_AGE_MS;
   },
 
   // Changed lines since HEAD; an untracked file is all new.
@@ -723,7 +751,7 @@ export const previewMethods = {
   previewToolbar(t, file, isMarkdown) {
     const abs = `${file.root}/${file.rel}`;
     const showsCode = !isMarkdown || this.mdCode;
-    const editable = !file.on && !IMAGE.test(file.rel) && showsCode && this.text !== undefined;
+    const editable = !file.on && !IMAGE.test(file.rel) && !EXTERNAL_PREVIEW(file.rel) && showsCode && this.text !== undefined;
     const real = !file.untitled;
     return h_flex().h(30).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).text_size(TEXT.small)
       .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(parentFolder(file.rel)))
@@ -732,7 +760,7 @@ export const previewMethods = {
         .child(IconButton({ id: "pv-code", icon: "file", label: "Code", active: this.mdCode, onClick: (cx) => this.setMdCode(true, cx), size: 22 })))
       .when(showsCode && real, (el) => this.codeTools(t, el))
       .when(editable, (el) => this.editTools(t, el))
-      .when(!file.on && real, (el) => el.child(IconButton({ id: "pv-open", icon: "external", label: "Open in default app", onClick: () => exec("open", ["--", abs]).catch(() => {}), size: 22 })));
+      .when(!file.on && real, (el) => el.child(IconButton({ id: "pv-open", icon: "external", label: EXTERNAL_PREVIEW(file.rel) ? "Open Preview" : "Open in default app", onClick: () => exec("open", ["--", abs]).catch(() => {}), size: 22 })));
   },
 
   // The selected line's full blame, like GitLens' current-line annotation.
@@ -756,6 +784,15 @@ export const previewMethods = {
     }
     if (IMAGE.test(file.rel)) {
       return this.imageCopy ? h_flex().flex_1().min_h(0).p(16).justify_center().items_center().child(image(this.imageCopy).max_w_full().max_h_full()) : Message("Loading…");
+    }
+    if (EXTERNAL_PREVIEW(file.rel)) {
+      const kind = HTML.test(file.rel) ? "HTML" : "Video";
+      return v_flex().flex_1().min_h(0).items_center().justify_center().gap(12)
+        .child(Icon(kind === "HTML" ? "code" : "play", 32).text_color(t.accent))
+        .child(div().text_size(TEXT.title).font_medium().child(`${kind} preview`))
+        .child(div().max_w(460).px(24).text_center().text_size(TEXT.small).text_color(t.muted)
+          .child(`This Herdr version has no embedded ${kind.toLowerCase()} renderer. Open the file in its default app to preview it.`))
+        .child(toolbarLink(t, "pv-external", "Open Preview", () => exec("open", ["--", `${file.root}/${file.rel}`]).catch(() => {}), true));
     }
     if (this.text === undefined) {
       return Message("Loading…");

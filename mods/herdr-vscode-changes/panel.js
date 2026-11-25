@@ -242,6 +242,7 @@ export const panelMethods = {
       return;
     }
     const runGit = (args) => git(args, { cwd: top, on: context.on });
+    const startedAt = Date.now();
     const [status, staged, unstaged, head] = await Promise.all([
       runGit(STATUS_ARGS),
       runGit(["diff", "--cached", ...NUMSTAT_ARGS]),
@@ -256,6 +257,7 @@ export const panelMethods = {
     }
     // Sections reload only when HEAD, the tree or the upstream moved.
     const signature = this.applyStatus(top, context, { status, staged, unstaged, head });
+    this.pollPacer?.note({ changed: signature !== this.sectionsSig, tookMs: Date.now() - startedAt });
     if (signature !== this.sectionsSig) {
       this.sectionsSig = signature;
       this.refreshSections(cx);
@@ -263,7 +265,11 @@ export const panelMethods = {
   },
 
   // A refresh asked for while one runs (the repo changed) runs right after it, not on the next timer.
-  refresh(cx) {
+  // `polled` is the timer's: any other caller (a click, a git action, a repo switch) resets the poll to its base rate.
+  refresh(cx, polled = false) {
+    if (!polled) {
+      this.pollPacer?.reset();
+    }
     if (this.loading) {
       this.refreshAgain = true;
       return;

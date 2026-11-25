@@ -1,8 +1,9 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, home, openOverlay, closeOverlay, props, run, layout, checking, shared, setShared } from "herdr";
+import { theme, home, openOverlay, closeOverlay, props, run, layout, checking, shared, setShared, window } from "herdr";
 import { ctx, contextKey, git, repoTop, changedAt, baseName, workspace } from "./ws.js";
 import { parseStatus } from "./git-core.js";
+import { PollPacer } from "./poll-core.js";
 import { workspaceProblems, countProblems } from "./panel-core.js";
 import { confirmMethods, runAction } from "./actions.js";
 import { TEXT, Icon, ConfirmView, stateLook } from "./ui.js";
@@ -15,6 +16,8 @@ class HerdrVscodeStatus extends View {
   static MOD = "herdr-vscode-status";
   static FOLLOW_MS = 400;
   static GIT_MS = 8000;
+  // An unchanged repo backs off to this; a slow git call stretches it further.
+  static GIT_MAX_MS = 60000;
   static DEFAULT_WIDTH = 1200;
   static WIDE_WIDTH = 900;
   static MID_WIDTH = 620;
@@ -56,8 +59,20 @@ class HerdrVscodeStatus extends View {
     if (checking()) {
       return;
     }
+    this.pacer = new PollPacer({ baseMs: HerdrVscodeStatus.GIT_MS, maxMs: HerdrVscodeStatus.GIT_MAX_MS });
     cx.timer.every(HerdrVscodeStatus.FOLLOW_MS, (cx) => this.follow(cx));
-    cx.timer.every(HerdrVscodeStatus.GIT_MS, (cx) => this.refresh(cx));
+    this.scheduleGit(cx);
+  }
+
+  // One timer chain: the next read backs off while the repo is unchanged or git is slow, and a
+  // hidden window reads nothing.
+  scheduleGit(cx) {
+    cx.timer.after(this.pacer.nextMs(), (cx) => {
+      if (window()?.visible !== false) {
+        this.refresh(cx);
+      }
+      this.scheduleGit(cx);
+    });
   }
 
   follow(cx) {
@@ -67,7 +82,13 @@ class HerdrVscodeStatus extends View {
     }
     this.key = key;
     this.seenChange = changedAt();
+    this.pacer?.reset();
     this.refresh(cx);
+  }
+
+  // What the status bar shows of a repo: when it is the same twice, the poll can back off.
+  static signatureOf(repo) {
+    return repo ? JSON.stringify([repo.top, repo.branch, repo.upstream, repo.ahead, repo.behind, repo.staged, repo.unstaged, repo.untracked, repo.conflicts, repo.stash]) : "";
   }
 
   refresh(cx) {
@@ -81,6 +102,8 @@ class HerdrVscodeStatus extends View {
       return;
     }
     this.busy = true;
+    const startedAt = Date.now();
+    const before = HerdrVscodeStatus.signatureOf(this.repo);
     cx.spawn(async (cx) => {
       try {
         await this.loadRepo(context);
@@ -88,6 +111,7 @@ class HerdrVscodeStatus extends View {
         this.repo = null;
       } finally {
         this.busy = false;
+        this.pacer?.note({ changed: HerdrVscodeStatus.signatureOf(this.repo) !== before, tookMs: Date.now() - startedAt });
         if (this.again) {
           this.again = false;
           this.refresh(cx);

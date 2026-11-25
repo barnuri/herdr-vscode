@@ -200,12 +200,17 @@ export const treeMethods = {
     localStorage.setItem(openKey(this.root), JSON.stringify([...this.openDirs]));
   },
 
-  reload(cx) {
+  // `polled` is the timer's: any other caller (a click, a watched change, a context switch) resets the poll to its base rate.
+  reload(cx, polled = false) {
+    if (!polled) {
+      this.reloadPacer?.reset();
+    }
     if (!this.root || this.reloading) {
       return;
     }
     this.reloading = true;
     const root = this.root;
+    const startedAt = Date.now();
     cx.spawn(async (cx) => {
       try {
         await this.loadOpenFolders(root);
@@ -223,6 +228,9 @@ export const treeMethods = {
         }
       } finally {
         this.reloading = false;
+        const signature = JSON.stringify([this.marks, this.ignored.size, [...this.entries].map(([rel, list]) => [rel, list.length])]);
+        this.reloadPacer?.note({ changed: signature !== this.reloadSignature, tookMs: Date.now() - startedAt });
+        this.reloadSignature = signature;
         cx.notify();
       }
     });

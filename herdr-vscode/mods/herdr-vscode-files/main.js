@@ -1,6 +1,7 @@
 import { View } from "gpui-kit";
 import { InputState } from "gpui-base";
-import { props, checking, nextCommand } from "herdr";
+import { props, checking, nextCommand, window } from "herdr";
+import { PollPacer } from "./poll-core.js";
 import { treeMethods } from "./tree.js";
 import { previewMethods } from "./preview.js";
 import { timelineMethods } from "./timeline.js";
@@ -14,6 +15,7 @@ import { whenSettings } from "./settings.js";
 class HerdrVscodeFiles extends View {
   static FOLLOW_MS = 400;
   static REFRESH_MS = 10000;
+  static REFRESH_MAX_MS = 60000;
   static MODE_VIEW = "view";
   static MODE_TIMELINE = "timeline";
 
@@ -84,7 +86,19 @@ class HerdrVscodeFiles extends View {
       return;
     }
     cx.timer.every(HerdrVscodeFiles.FOLLOW_MS, (cx) => this.followTree(cx));
-    cx.timer.every(HerdrVscodeFiles.REFRESH_MS, (cx) => this.reload(cx));
+    this.reloadPacer = new PollPacer({ baseMs: HerdrVscodeFiles.REFRESH_MS, maxMs: HerdrVscodeFiles.REFRESH_MAX_MS });
+    this.scheduleReload(cx);
+  }
+
+  // One timer chain: the next reload waits for the last one and backs off while the tree and its git
+  // marks are unchanged or git is slow. A hidden window reloads nothing.
+  scheduleReload(cx) {
+    cx.timer.after(this.reloadPacer.nextMs(), (cx) => {
+      if (window()?.visible !== false) {
+        this.reload(cx, true);
+      }
+      this.scheduleReload(cx);
+    });
   }
 
   render() {
