@@ -26,7 +26,7 @@ class HerdrVscodeTitlebar extends View {
   static CENTER_MIN_WIDTH = 200;
   static CENTER_MAX_WIDTH = 520;
   static CENTER_WIDTH_RATIO = 0.34;
-  static GOTO_PREFIXES = { goto: "", commands: "> ", symbols: "@", line: ":", help: "?" };
+  static GOTO_PREFIXES = { goto: "", commands: ">", symbols: "@", line: ":", help: "?" };
   static STEPS = { back: -1, forward: 1 };
   static VERSIONS_MIN_WIDTH = 900;
 
