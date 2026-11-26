@@ -7,6 +7,7 @@ import { showInViewer } from "./tabs.js";
 import { getSetting, setSetting, whenSettings } from "./settings.js";
 import { withTreeIndent, twistieSlot, treePadding } from "./tree-ui.js";
 import { activeGuideLevel } from "./tree-core.js";
+import { selectClick } from "./fileops-core.js";
 
 const ROW = 22;
 const MAX_ROWS = 2500;
@@ -108,6 +109,9 @@ export const explorerMethods = {
     this.entries = new Map();
     this.open = new Set();
     this.selected = null;
+    this.selection = new Set();
+    this.anchor = null;
+    this.rowOrder = [];
     this.drag = null;
     this.ignored = new Map();
     this.index = new Map();
@@ -342,14 +346,40 @@ export const explorerMethods = {
       .child(div().w(7).flex_none().h(7).rounded(4).when(Boolean(dot), (el) => el.bg(dot)));
   },
 
-  clickEntry(cx, root, path, entry, key) {
+  // cmd-click toggles a row and shift-click selects a range, without opening anything.
+  clickEntry(event, cx, root, path, entry, key) {
+    const cmd = Boolean(event?.modifiers?.platform);
+    const shift = Boolean(event?.modifiers?.shift);
+    const next = selectClick({ selection: this.selection, anchor: this.anchor, order: this.rowOrder, key, cmd, shift });
+    this.selection = next.selection;
+    this.anchor = next.anchor;
     this.selected = key;
+    if (cmd || shift) {
+      cx.notify();
+      return;
+    }
     if (entry.dir) {
       this.toggle(root.path, path, cx);
       return;
     }
     setActive(root, "pick");
     showInViewer(VIEWER_MOD, { root: root.path, on: null, rel: path }, entry.name);
+    cx.notify();
+  },
+
+  // Right click on a row of a 2+ selection acts on all of it; on any other row, selects only that row.
+  rightClickEntry(cx, root, path, entry, key) {
+    if (!this.selection.has(key)) {
+      this.selection = new Set([key]);
+      this.anchor = key;
+    }
+    this.selected = key;
+    if (this.selection.size > 1) {
+      const paths = [...this.selection].filter((selectedKey) => !selectedKey.endsWith("\0")).map((selectedKey) => selectedKey.replace("\0", "/"));
+      this.openMenu({ kind: "multi", paths });
+    } else {
+      this.openMenu({ kind: "entry", root, rel: path, dir: entry.dir });
+    }
     cx.notify();
   },
 
@@ -361,17 +391,15 @@ export const explorerMethods = {
     const below = entry.dir && !mark && marks && Object.keys(marks).some((changed) => changed.startsWith(`${path}/`));
     const ignored = !mark && this.isIgnored(root.path, path);
     const color = entryColor(t, mark, below, ignored);
-    const selected = this.selected === key;
+    const selected = this.selection.has(key);
     const row = h_flex()
       .id(`e-${key}`).h(ROW).flex_none().pr(8).gap(4).items_center()
       .bg(selected ? t.selected : TRANSPARENT).when(!selected, (el) => el.hover((style) => style.bg(t.hover)))
       .cursor_pointer().text_size(TEXT.body)
-      .on_click((_event, cx) => this.clickEntry(cx, root, path, entry, key))
+      .on_click((event, cx) => this.clickEntry(event, cx, root, path, entry, key))
       .on_mouse_down("right", (_event, cx) => {
         cx.stop_propagation();
-        this.selected = key;
-        this.openMenu({ kind: "entry", root, rel: path, dir: entry.dir });
-        cx.notify();
+        this.rightClickEntry(cx, root, path, entry, key);
       })
       .child(twistieSlot(entry.dir ? Icon(open ? "chevron-down" : "chevron-right", 14).text_color(t.dim) : null))
       .child(FileIcon(this.icons, `${root.path}/${path}`, { dir: entry.dir, open, size: 16 }))
@@ -413,6 +441,7 @@ export const explorerMethods = {
         }
         const path = childPath(rel, entry.name);
         this.noteRevealRow(entryKey(root.path, path), rows.length);
+        this.rowOrder.push(entryKey(root.path, path));
         rows.push(this.entryRow(t, root, rel, entry, depth, marks));
         if (entry.dir && this.open.has(entryKey(root.path, path))) {
           walk(path, depth + 1);
@@ -424,6 +453,7 @@ export const explorerMethods = {
 
   explorerRows(t) {
     const rows = [];
+    this.rowOrder = [];
     const roots = this.ws?.roots ?? [];
     // One folder: like VS Code, its contents sit at the top level with no folder row.
     if (roots.length === 1) {

@@ -24,6 +24,7 @@ const KIND_ROOT = "root";
 const KIND_RENAME = "rename";
 const KIND_RENAME_FILE = "renameFile";
 const KIND_ENTRY = "entry";
+const KIND_MULTI = "multi";
 export const KIND_NEW_FILE = "newFile";
 const NEW_FILE_DIALOG_HEIGHT = 190;
 
@@ -103,7 +104,7 @@ function entryItems(menu) {
     { id: "copyrel", icon: "copy", label: "Copy Relative Path", copy: menu.rel },
     { sep: true, id: "s3" },
     { id: "rename", icon: "pencil", label: "Rename…", dialog: { kind: KIND_RENAME_FILE, path: abs, name: baseName(abs) } },
-    { id: "delete", icon: "trash", label: "Delete", cmd: { cmd: "delete", path: abs, dir: menu.dir } },
+    { id: "delete", icon: "trash", label: "Delete", cmd: { cmd: "delete", paths: [abs] } },
     { sep: true, id: "s4", off: !hasLink },
     ...remoteLinkItems(menu.links).map((item) => (item.kind === "open"
       ? { id: item.id, icon: "external", label: item.label, cmd: { cmd: "finder", path: item.url } }
@@ -136,6 +137,9 @@ export const menuMethods = {
     }
     if (menu.kind === KIND_ROOT) {
       return rootItems(menu, ws);
+    }
+    if (menu.kind === KIND_MULTI) {
+      return [{ id: "delete", icon: "trash", label: `Delete ${menu.paths.length} Items`, cmd: { cmd: "delete", paths: menu.paths } }];
     }
     return entryItems(menu);
   },

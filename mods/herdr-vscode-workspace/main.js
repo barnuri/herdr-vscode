@@ -9,7 +9,7 @@ import {
 import { newWorkspace, stringifyWorkspace, workspaceName, parentOf } from "./ws-core.js";
 import { parseStatus } from "./git-core.js";
 import { askConfirm, confirmMethods, runAction } from "./actions.js";
-import { CLIPBOARD_KEY, pastePlan } from "./fileops-core.js";
+import { CLIPBOARD_KEY, pastePlan, trashTargets } from "./fileops-core.js";
 import { logInfo, toast, logError } from "./log.js";
 import { getSetting, loadSettings } from "./settings.js";
 import { TEXT, Icon, IconButton, ConfirmView } from "./ui.js";
@@ -223,6 +223,11 @@ class HerdrVscodeWorkspace extends View {
   resetForWorkspace(ws, cx) {
     this.entries = new Map();
     this.index = new Map();
+    this.selected = null;
+    this.selection = new Set();
+    this.anchor = null;
+    this.rowOrder = [];
+    this.activeFileSeen = null;
     this.restoreOpen();
     this.reloadOpen(cx);
     this.status = new Map();
@@ -489,14 +494,14 @@ class HerdrVscodeWorkspace extends View {
     });
   }
 
-  commandDelete(command) {
-    askConfirm(HerdrVscodeWorkspace.MOD, {
-      title: `Delete ${baseName(command.path)}?`,
-      detail: `Moves the ${command.dir ? "folder and everything in it" : "file"} to the Trash. You can put it back from there.`,
-      label: "Move to Trash",
-      danger: true,
-      action: { doing: "Deleting", done: `Moved ${baseName(command.path)} to the Trash`, root: parentOf(command.path), steps: [{ cmd: "trash", args: [command.path] }] },
-    });
+  // Moves the paths to the Trash at once, with no confirm dialog (they can come back from the Trash).
+  async commandDelete(command) {
+    const paths = trashTargets(command.paths ?? [command.path]);
+    if (!paths.length) {
+      return;
+    }
+    const done = paths.length === 1 ? `Moved ${baseName(paths[0])} to the Trash` : `Moved ${paths.length} items to the Trash`;
+    await runAction({ doing: "Deleting", done, root: parentOf(paths[0]), steps: [{ cmd: "trash", args: paths }] });
   }
 
   async commandRenameFile(command) {
@@ -687,6 +692,7 @@ class HerdrVscodeWorkspace extends View {
     this.index = new Map();
     this.refreshAll(cx);
     this.reloadOpen(cx);
+    this.followActiveFile(cx, true);
   }
 
   resize(size, cx) {

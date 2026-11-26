@@ -1,6 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { copyName, pastePlan, lineAnchor, fileWebUrl, remoteLinkItems, autoSaveDue, autoSaveMode } from "../shared/fileops-core.js";
+import { copyName, pastePlan, lineAnchor, fileWebUrl, remoteLinkItems, autoSaveDue, autoSaveMode, trashTargets, selectClick } from "../shared/fileops-core.js";
+
+test("trashTargets drops duplicates and paths inside another target", () => {
+  assert.deepEqual(trashTargets(["/r/d/a", "/r/d", "/r/b", "/r/b", "/r/dx"]), ["/r/b", "/r/d", "/r/dx"]);
+  assert.deepEqual(trashTargets([]), []);
+  assert.deepEqual(trashTargets(undefined), []);
+});
+
+test("selectClick: plain, cmd toggle, shift range", () => {
+  const order = ["a", "b", "c", "d"];
+  const plain = selectClick({ selection: new Set(["a", "b"]), anchor: "a", order, key: "c" });
+  assert.deepEqual([...plain.selection], ["c"]);
+  assert.equal(plain.anchor, "c");
+  const added = selectClick({ selection: new Set(["a"]), anchor: "a", order, key: "c", cmd: true });
+  assert.deepEqual([...added.selection].sort(), ["a", "c"]);
+  const removed = selectClick({ selection: added.selection, anchor: "c", order, key: "a", cmd: true });
+  assert.deepEqual([...removed.selection], ["c"]);
+  const range = selectClick({ selection: new Set(["d"]), anchor: "d", order, key: "b", shift: true });
+  assert.deepEqual([...range.selection], ["b", "c", "d"]);
+  assert.equal(range.anchor, "d");
+  const noAnchor = selectClick({ selection: new Set(), anchor: null, order, key: "b", shift: true });
+  assert.deepEqual([...noAnchor.selection], ["b"]);
+});
 
 test("copyName picks the first free copy name", () => {
   assert.equal(copyName("a.txt", new Set(["a.txt"])), "a copy.txt");

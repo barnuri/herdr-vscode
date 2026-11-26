@@ -43,6 +43,31 @@ export function pastePlan(clip, folder, names) {
   return { source, target, move: Boolean(clip.cut), conflict: taken.has(name) };
 }
 
+// The paths to trash: no duplicates, and none inside another path in the list.
+export function trashTargets(paths) {
+  const unique = [...new Set((paths ?? []).filter(Boolean))].sort();
+  return unique.filter((path) => !unique.some((other) => other !== path && path.startsWith(`${other}/`)));
+}
+
+// Explorer selection after a click on `key`. `order` = the visible row keys, top to bottom.
+// cmd toggles one row; shift selects from the anchor to `key`; a plain click selects only `key`.
+export function selectClick({ selection, anchor, order, key, cmd = false, shift = false }) {
+  if (shift && anchor && order.includes(anchor) && order.includes(key)) {
+    const [from, to] = [order.indexOf(anchor), order.indexOf(key)].sort((a, b) => a - b);
+    return { selection: new Set(order.slice(from, to + 1)), anchor };
+  }
+  if (cmd) {
+    const next = new Set(selection);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    return { selection: next, anchor: key };
+  }
+  return { selection: new Set([key]), anchor: key };
+}
+
 const encodePath = (rel) => String(rel).split("/").map(encodeURIComponent).join("/");
 
 // "#L5" or a range: GitHub writes "#L5-L9", GitLab "#L5-9".
